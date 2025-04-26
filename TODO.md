@@ -1,0 +1,2 @@
+- [x] boilerplate with clap and tokio stuff
+- [ ] powermetrics inside tokio task outputting through channel and onto screen
