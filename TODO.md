@@ -1,2 +1,3 @@
 - [x] boilerplate with clap and tokio stuff
-- [ ] powermetrics inside tokio task outputting through channel and onto screen
+- [x] powermetrics inside tokio task outputting through reader and onto screen
+- [ ] start powermetrics parser, showing CPU and GPU usage, with power usage values for both.
