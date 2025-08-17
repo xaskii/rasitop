@@ -8,3 +8,7 @@ anyhow = "1.0.98"
 clap = { version = "4.5.37", features = ["derive"] }
 tokio = { version = "1.44.2", features = ["full"] }
 tracing = "0.1.41"
+serde = { version = "1.0.210", features = ["derive"] }
+plist = "1.7.0"
+ratatui = "0.28.1"
+crossterm = "0.27.0"
