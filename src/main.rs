@@ -7,6 +7,7 @@ use tokio::{
 };
 
 mod metrics;
+mod output;
 mod pm;
 mod ui;
 
@@ -55,9 +56,19 @@ async fn run() -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    let interval = args.interval * 1000;
+    // TODO: validate that the interval is greater than 100ms. The min
+    // collection interval that I found powermetrics is able to do is 22ms.
+    // When we switch to read directly from SMC, we can probably go lower, but
+    // I'm not sure if that makes any sense.
+    let interval_ms = args.interval * 1000;
     let mut child = Command::new("sudo")
-        .args(["powermetrics", "-i", &interval.to_string(), "-f", "plist"])
+        .args([
+            "powermetrics",
+            "-i",
+            &interval_ms.to_string(),
+            "-f",
+            "plist",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -69,18 +80,11 @@ async fn run() -> anyhow::Result<ExitCode> {
     // Reader and parser for powermetrics plist stream
     let tx_reader = tx_pm.clone();
     tokio::spawn(async move {
-        let mut reader = BufReader::new(pm_out);
-        let mut buf = Vec::new();
-        while let Ok(n) = reader.read_until(b'\0', &mut buf).await {
-            if n == 0 {
-                break;
-            }
-            if let Some(last) = buf.last()
-                && *last == 0
-            {
-                buf.pop();
-            }
-            match plist::from_bytes::<pm::PowermetricsPlist>(&buf) {
+        let reader = BufReader::new(pm_out);
+        let mut segments = reader.split(b'\0');
+
+        while let Ok(Some(segment)) = segments.next_segment().await {
+            match plist::from_bytes::<pm::PowermetricsPlist>(&segment) {
                 Ok(doc) => {
                     if let Some(sample) = pm::PowermetricsSample::from_plist(&doc) {
                         let _ = tx_reader.send(sample).await;
@@ -90,7 +94,6 @@ async fn run() -> anyhow::Result<ExitCode> {
                     eprintln!("[powermetrics_parser]: failed to parse plist: {:#}", err);
                 }
             }
-            buf.clear();
         }
     });
 
@@ -124,11 +127,11 @@ async fn run() -> anyhow::Result<ExitCode> {
                     {
                         break;
                     }
-                    Ok(_) => {}
                     Err(err) => {
                         eprintln!("UI input error: {:#}", err);
                         break;
                     }
+                    _ => {}
                 },
                 Ok(false) => {}
                 Err(err) => {
