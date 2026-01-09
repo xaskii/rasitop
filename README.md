@@ -9,13 +9,42 @@ Intended to be a rewrite of asitop in Rust, but not sure what direction I'm gonn
 cargo build --bin rasitop (only guaranteed to build on stable)
 ```
 
-## TODO for implementation
-- [x] boilerplate with clap and tokio stuff
-- [x] powermetrics inside tokio task outputting through reader and onto screen
-- [x] start powermetrics parser, showing CPU and GPU usage, with power usage values for both.
-- [ ] better ctrl-c handling
-  - it doesn't stop everything properly. I need to listen for ctrl-c and then propogate it across the other threads
-- [ ] redirect stderr to a log file
-  - I can just use a tmpdir for now like idk. I also have to figure out why it keeps saying underflow occured. 
-- [ ] make a crate that's responsible for the entire powermetrics plist schema
-  - This is a more platform agnostic solution to use the binary instead of trying to the objc bindings. Regardless I just want to have a struct I use separate from the schema, and then I can substitute out that provider when I want to switch to objc bindings later.
+## Usage
+
+Rasitop requires `sudo` to run `powermetrics` under the hood.
+
+```sh
+sudo rasitop [OPTIONS]
+```
+
+### Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-i, --interval <SECONDS>` | Refresh interval in seconds | `1` |
+| `--format <FORMAT>` | Output format: `json`, `csv`, or `human` | `human` |
+| `--log-level <LEVEL>` | Log level: `error`, `warn`, `info`, `debug`, `trace` (or use `RUST_LOG` env var) | `warn` |
+| `-v, --verbose` | Enable verbose mode with formatted text output | off |
+| `--from-file <PATH>` | Parse a plist sample from a file instead of running powermetrics (for testing) | - |
+| `-h, --help` | Print help | - |
+| `-V, --version` | Print version | - |
+
+### Examples
+
+```sh
+# Run with default settings (1 second interval, human-readable output)
+sudo rasitop
+
+# Run with 2 second refresh interval
+sudo rasitop -i 2
+
+# Output as JSON
+sudo rasitop --format json
+
+# Output as CSV
+sudo rasitop --format csv
+
+# Test with a saved plist file
+rasitop --from-file sample.plist -v
+```
+

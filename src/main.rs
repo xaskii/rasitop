@@ -5,6 +5,8 @@ use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
 };
+use tracing::{debug, info, warn};
+use tracing_subscriber::EnvFilter;
 
 mod output;
 mod pm;
@@ -24,6 +26,9 @@ struct Opts {
     /// Output format: json, csv, or human
     #[arg(long, default_value = "human")]
     format: OutputFormat,
+    /// Log level: error, warn, info, debug, trace (or use RUST_LOG env var)
+    #[arg(long, default_value = "warn")]
+    log_level: String,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -47,6 +52,16 @@ async fn main() -> ExitCode {
 
 async fn run() -> anyhow::Result<ExitCode> {
     let args = Opts::parse();
+
+    // Initialize tracing subscriber with the specified log level
+    // RUST_LOG env var takes precedence if set
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&args.log_level));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .without_time()
+        .init();
 
     // Testing path: parse from file once and exit
     if let Some(path) = args.from_file.as_ref() {
@@ -115,50 +130,42 @@ async fn run() -> anyhow::Result<ExitCode> {
                 Ok(doc) => {
                     if let Some(sample) = pm::PowermetricsSample::from_plist(&doc) {
                         if tx_reader.send(sample).await.is_err() {
-                            eprintln!("[powermetrics_parser]: receiver dropped, stopping parser");
+                            warn!("receiver dropped, stopping parser");
                             break;
                         }
                     } else {
-                        eprintln!(
-                            "[powermetrics_parser]: sample {} - valid plist but no usable sample data",
-                            sample_count
+                        warn!(
+                            sample = sample_count,
+                            "valid plist but no usable sample data"
                         );
                     }
                 }
                 Err(err) => {
                     error_count += 1;
-                    eprintln!(
-                        "[powermetrics_parser]: sample {} - parse error: {:#}",
-                        sample_count, err
-                    );
+                    warn!(sample = sample_count, error = %err, "plist parse error");
 
                     // Debug: show segment preview for first few errors
                     if error_count <= 3 {
-                        eprintln!(
-                            "[powermetrics_parser]: segment size: {} bytes",
-                            segment.len()
-                        );
-                        eprintln!(
-                            "[powermetrics_parser]: first 200 chars: {:?}",
-                            String::from_utf8_lossy(&segment)
-                                .chars()
-                                .take(200)
-                                .collect::<String>()
+                        debug!(
+                            segment_size = segment.len(),
+                            preview = %String::from_utf8_lossy(&segment).chars().take(200).collect::<String>(),
+                            "segment details"
                         );
                     }
 
                     // Stop if too many consecutive errors
                     if error_count > 10 {
-                        eprintln!("[powermetrics_parser]: too many errors, stopping parser");
+                        tracing::error!("too many parse errors, stopping parser");
                         break;
                     }
                 }
             }
         }
 
-        eprintln!(
-            "[powermetrics_parser]: parser stopped - samples: {}, errors: {}",
-            sample_count, error_count
+        info!(
+            samples = sample_count,
+            errors = error_count,
+            "parser stopped"
         );
     });
 
@@ -167,7 +174,12 @@ async fn run() -> anyhow::Result<ExitCode> {
     tokio::spawn(async move {
         let mut reader = BufReader::new(pm_stderr).lines();
         while let Some(line) = reader.next_line().await.unwrap() {
-            eprintln!("[powermetrics_stderr]: {}", line);
+            // Known harmless powermetrics warnings go to debug
+            if line.contains("underflow") {
+                debug!(line = %line, "powermetrics timing warning");
+            } else {
+                warn!(line = %line, "powermetrics stderr");
+            }
         }
     });
 
@@ -185,7 +197,7 @@ async fn run() -> anyhow::Result<ExitCode> {
     loop {
         // Check for Ctrl-C
         if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-            eprintln!("[main]: received Ctrl-C, shutting down");
+            info!("received Ctrl-C, shutting down");
             break;
         }
 
@@ -195,7 +207,7 @@ async fn run() -> anyhow::Result<ExitCode> {
                 formatter.print_sample(&sample);
             }
             Ok(None) => {
-                eprintln!("[main]: parser channel closed, shutting down");
+                info!("parser channel closed, shutting down");
                 break;
             }
             Err(_) => {
@@ -212,11 +224,11 @@ async fn run() -> anyhow::Result<ExitCode> {
     match child.wait().await?.code() {
         Some(0) | Some(137) => Ok(ExitCode::SUCCESS), // 137 = SIGKILL is expected
         Some(code) => {
-            eprintln!("Command exited with code: {}", code);
+            warn!(exit_code = code, "powermetrics exited unexpectedly");
             Ok(ExitCode::FAILURE)
         }
         None => {
-            eprintln!("Command terminated by signal");
+            debug!("powermetrics terminated by signal");
             Ok(ExitCode::SUCCESS) // Expected since we killed it
         }
     }
