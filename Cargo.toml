@@ -8,6 +8,7 @@ anyhow = "1.0.98"
 clap = { version = "4.5.37", features = ["derive"] }
 tokio = { version = "1.44.2", features = ["full"] }
 tracing = "0.1.41"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1.0.210", features = ["derive"] }
 plist = "1.7.0"
 ctrlc = "3.5"
