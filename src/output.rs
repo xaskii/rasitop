@@ -181,4 +181,124 @@ mod tests {
         let sample = sample_for_test();
         formatter.print_sample(&sample);
     }
+
+    #[test]
+    fn test_formatters_with_missing_optional_fields() {
+        let sample = PowermetricsSample {
+            timestamp: None,
+            cpu_power_mw: 1000.0,
+            gpu_power_mw: 500.0,
+            combined_power_mw: 1500.0,
+            battery_percent: None,
+            cpu_busy_ratio: None,
+            e_busy_ratio: None,
+            p_busy_ratio: None,
+            e_freq_hz: None,
+            p_freq_hz: None,
+        };
+
+        // All formatters should handle missing fields gracefully
+        let human = HumanFormatter::new();
+        human.print_sample(&sample);
+
+        let csv = CsvFormatter::new();
+        csv.print_sample(&sample);
+
+        let json = JsonFormatter::new();
+        json.print_sample(&sample);
+    }
+
+    #[test]
+    fn test_formatters_with_zero_values() {
+        let sample = PowermetricsSample {
+            timestamp: Some("2025-01-01T00:00:00Z".to_string()),
+            cpu_power_mw: 0.0,
+            gpu_power_mw: 0.0,
+            combined_power_mw: 0.0,
+            battery_percent: Some(0),
+            cpu_busy_ratio: Some(0.0),
+            e_busy_ratio: Some(0.0),
+            p_busy_ratio: Some(0.0),
+            e_freq_hz: Some(0.0),
+            p_freq_hz: Some(0.0),
+        };
+
+        let human = HumanFormatter::new();
+        human.print_sample(&sample);
+
+        let csv = CsvFormatter::new();
+        csv.print_sample(&sample);
+
+        let json = JsonFormatter::new();
+        json.print_sample(&sample);
+    }
+
+    #[test]
+    fn test_formatters_with_high_values() {
+        let sample = PowermetricsSample {
+            timestamp: Some("2025-12-31T23:59:59Z".to_string()),
+            cpu_power_mw: 50000.0, // 50W
+            gpu_power_mw: 150000.0, // 150W
+            combined_power_mw: 200000.0, // 200W
+            battery_percent: Some(100),
+            cpu_busy_ratio: Some(1.0),
+            e_busy_ratio: Some(1.0),
+            p_busy_ratio: Some(1.0),
+            e_freq_hz: Some(4.0e9), // 4 GHz
+            p_freq_hz: Some(5.0e9), // 5 GHz
+        };
+
+        let human = HumanFormatter::new();
+        human.print_sample(&sample);
+
+        let csv = CsvFormatter::new();
+        csv.print_sample(&sample);
+
+        let json = JsonFormatter::new();
+        json.print_sample(&sample);
+    }
+
+    #[test]
+    fn test_formatters_with_partial_cluster_data() {
+        // E-cluster data only
+        let sample1 = PowermetricsSample {
+            timestamp: Some("2025-01-15T12:00:00Z".to_string()),
+            cpu_power_mw: 1200.0,
+            gpu_power_mw: 0.0,
+            combined_power_mw: 1200.0,
+            battery_percent: Some(50),
+            cpu_busy_ratio: None,
+            e_busy_ratio: Some(0.5),
+            p_busy_ratio: None,
+            e_freq_hz: Some(1.5e9),
+            p_freq_hz: None,
+        };
+
+        let human = HumanFormatter::new();
+        human.print_sample(&sample1);
+
+        let csv = CsvFormatter::new();
+        csv.print_sample(&sample1);
+
+        let json = JsonFormatter::new();
+        json.print_sample(&sample1);
+
+        // P-cluster data only
+        let sample2 = PowermetricsSample {
+            timestamp: Some("2025-01-15T12:00:01Z".to_string()),
+            cpu_power_mw: 3500.0,
+            gpu_power_mw: 200.0,
+            combined_power_mw: 3700.0,
+            battery_percent: Some(49),
+            cpu_busy_ratio: None,
+            e_busy_ratio: None,
+            p_busy_ratio: Some(0.8),
+            e_freq_hz: None,
+            p_freq_hz: Some(3.2e9),
+        };
+
+        human.print_sample(&sample2);
+        csv.print_sample(&sample2);
+        json.print_sample(&sample2);
+    }
 }
