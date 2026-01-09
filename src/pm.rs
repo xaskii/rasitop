@@ -7,6 +7,7 @@ pub struct PowermetricsSample {
     pub gpu_power_mw: f64,
     pub combined_power_mw: f64,
     pub battery_percent: Option<u8>,
+    #[allow(dead_code)]
     pub cpu_busy_ratio: Option<f64>,
     pub e_busy_ratio: Option<f64>,
     pub p_busy_ratio: Option<f64>,
@@ -97,6 +98,7 @@ pub struct PowermetricsPlist {
     pub processor: Option<Processor>,
     pub battery: Option<Battery>,
     // GPU sometimes contains duplicate keys (e.g., idle_ns). Parse as raw value to avoid errors.
+    #[allow(dead_code)]
     pub gpu: Option<plist::Value>,
 }
 
@@ -110,9 +112,13 @@ pub struct Processor {
     pub cpu_power: Option<f64>,
     pub gpu_power: Option<f64>,
     pub combined_power: Option<f64>,
+    #[allow(dead_code)]
     pub cpu_energy: Option<u64>,
+    #[allow(dead_code)]
     pub gpu_energy: Option<u64>,
+    #[allow(dead_code)]
     pub ane_energy: Option<u64>,
+    #[allow(dead_code)]
     pub ane_power: Option<f64>,
     pub clusters: Option<Vec<Cluster>>,
 }
@@ -120,27 +126,39 @@ pub struct Processor {
 #[derive(Debug, Deserialize)]
 pub struct Cluster {
     pub name: Option<String>,
+    #[allow(dead_code)]
     pub hw_resid_counters: Option<bool>,
     pub freq_hz: Option<f64>,
+    #[allow(dead_code)]
     pub idle_ns: Option<u64>,
     pub idle_ratio: Option<f64>,
+    #[allow(dead_code)]
     pub dvfm_states: Option<Vec<DvfmState>>,
+    #[allow(dead_code)]
     pub cpus: Option<Vec<CpuCore>>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CpuCore {
+    #[allow(dead_code)]
     pub cpu: Option<u32>,
+    #[allow(dead_code)]
     pub freq_hz: Option<f64>,
+    #[allow(dead_code)]
     pub idle_ns: Option<u64>,
+    #[allow(dead_code)]
     pub idle_ratio: Option<f64>,
+    #[allow(dead_code)]
     pub dvfm_states: Option<Vec<DvfmState>>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct DvfmState {
+    #[allow(dead_code)]
     pub freq: Option<u64>,
+    #[allow(dead_code)]
     pub used_ns: Option<u64>,
+    #[allow(dead_code)]
     pub used_ratio: Option<f64>,
 }
 
