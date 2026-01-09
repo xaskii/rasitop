@@ -205,4 +205,140 @@ mod tests {
 
         assert!(sample.timestamp.is_some());
     }
+
+    #[test]
+    fn handles_missing_battery() {
+        let doc = PowermetricsPlist {
+            timestamp: None,
+            processor: Some(Processor {
+                cpu_power: Some(1000.0),
+                gpu_power: Some(200.0),
+                combined_power: Some(1200.0),
+                cpu_energy: None,
+                gpu_energy: None,
+                ane_energy: None,
+                ane_power: None,
+                clusters: None,
+            }),
+            battery: None,
+            gpu: None,
+        };
+
+        let sample = PowermetricsSample::from_plist(&doc).expect("should parse");
+        assert_close(sample.cpu_power_mw, 1000.0, 0.01);
+        assert_close(sample.gpu_power_mw, 200.0, 0.01);
+        assert_close(sample.combined_power_mw, 1200.0, 0.01);
+        assert_eq!(sample.battery_percent, None);
+    }
+
+    #[test]
+    fn handles_missing_clusters() {
+        let doc = PowermetricsPlist {
+            timestamp: None,
+            processor: Some(Processor {
+                cpu_power: Some(500.0),
+                gpu_power: Some(100.0),
+                combined_power: None, // Will compute from cpu + gpu
+                cpu_energy: None,
+                gpu_energy: None,
+                ane_energy: None,
+                ane_power: None,
+                clusters: None,
+            }),
+            battery: Some(Battery {
+                percent_charge: Some(50),
+            }),
+            gpu: None,
+        };
+
+        let sample = PowermetricsSample::from_plist(&doc).expect("should parse");
+        assert_close(sample.cpu_power_mw, 500.0, 0.01);
+        assert_close(sample.gpu_power_mw, 100.0, 0.01);
+        assert_close(sample.combined_power_mw, 600.0, 0.01); // Computed
+        assert_eq!(sample.battery_percent, Some(50));
+        assert_eq!(sample.e_busy_ratio, None);
+        assert_eq!(sample.p_busy_ratio, None);
+        assert_eq!(sample.e_freq_hz, None);
+        assert_eq!(sample.p_freq_hz, None);
+    }
+
+    #[test]
+    fn handles_single_cluster() {
+        let doc = PowermetricsPlist {
+            timestamp: None,
+            processor: Some(Processor {
+                cpu_power: Some(1500.0),
+                gpu_power: None,
+                combined_power: None,
+                cpu_energy: None,
+                gpu_energy: None,
+                ane_energy: None,
+                ane_power: None,
+                clusters: Some(vec![Cluster {
+                    name: Some("E-Cluster".to_string()),
+                    hw_resid_counters: None,
+                    freq_hz: Some(1.2e9),
+                    idle_ns: None,
+                    idle_ratio: Some(0.6),
+                    dvfm_states: None,
+                    cpus: None,
+                }]),
+            }),
+            battery: None,
+            gpu: None,
+        };
+
+        let sample = PowermetricsSample::from_plist(&doc).expect("should parse");
+        assert_close(sample.e_busy_ratio.unwrap(), 0.4, 0.01);
+        assert_eq!(sample.p_busy_ratio, None);
+        assert_close(sample.e_freq_hz.unwrap(), 1.2e9, 1.0);
+        assert_eq!(sample.p_freq_hz, None);
+    }
+
+    #[test]
+    fn handles_zero_power() {
+        let doc = PowermetricsPlist {
+            timestamp: None,
+            processor: Some(Processor {
+                cpu_power: Some(0.0),
+                gpu_power: Some(0.0),
+                combined_power: Some(0.0),
+                cpu_energy: None,
+                gpu_energy: None,
+                ane_energy: None,
+                ane_power: None,
+                clusters: None,
+            }),
+            battery: Some(Battery {
+                percent_charge: Some(100),
+            }),
+            gpu: None,
+        };
+
+        let sample = PowermetricsSample::from_plist(&doc).expect("should parse");
+        assert_close(sample.cpu_power_mw, 0.0, 1e-6);
+        assert_close(sample.gpu_power_mw, 0.0, 1e-6);
+        assert_close(sample.combined_power_mw, 0.0, 1e-6);
+    }
+
+    #[test]
+    fn handles_missing_processor() {
+        let doc = PowermetricsPlist {
+            timestamp: None,
+            processor: None,
+            battery: Some(Battery {
+                percent_charge: Some(75),
+            }),
+            gpu: None,
+        };
+
+        let sample = PowermetricsSample::from_plist(&doc).expect("should parse");
+        // Without processor, power values default to 0.0
+        assert_close(sample.cpu_power_mw, 0.0, 1e-6);
+        assert_close(sample.gpu_power_mw, 0.0, 1e-6);
+        assert_close(sample.combined_power_mw, 0.0, 1e-6);
+        assert_eq!(sample.battery_percent, Some(75));
+        assert_eq!(sample.e_busy_ratio, None);
+        assert_eq!(sample.p_busy_ratio, None);
+    }
 }
