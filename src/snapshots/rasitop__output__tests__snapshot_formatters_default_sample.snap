@@ -5,5 +5,5 @@ expression: format_outputs(&sample_for_test())
 FormatterOutputs {
     human: "[2025-04-26T21:49:40Z] CPU: 1.94W  GPU: 0.00W  Combined: 1.94W | E-busy: 38.8%  P-busy: 69.2%  E-freq: 0.97GHz  P-freq: 3.09GHz | Battery: 69%",
     csv: "timestamp,cpu_power_w,gpu_power_w,combined_power_w,e_busy_ratio,p_busy_ratio,e_freq_ghz,p_freq_ghz,battery_percent\n2025-04-26T21:49:40Z,1.94,0.00,1.94,0.3883,0.6921,0.97,3.09,69",
-    json: "{\"timestamp\":\"2025-04-26T21:49:40Z\",\"cpu_power_w\":1.94,\"gpu_power_w\":0.00,\"combined_power_w\":1.94,\"e_busy_ratio\":0.388264,\"p_busy_ratio\":0.692109,\"e_freq_ghz\":0.97,\"p_freq_ghz\":3.09,\"battery_percent\":69}",
+    json: "{\"battery_percent\":69,\"combined_power_w\":1.94,\"cpu_power_w\":1.94,\"e_busy_ratio\":0.388264,\"e_freq_ghz\":0.97,\"gpu_power_w\":0.0,\"p_busy_ratio\":0.692109,\"p_freq_ghz\":3.09,\"timestamp\":\"2025-04-26T21:49:40Z\"}",
 }
