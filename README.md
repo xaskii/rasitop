@@ -13,6 +13,10 @@ cargo build --bin rasitop (only guaranteed to build on stable)
 
 Rasitop requires `sudo` to run `powermetrics` under the hood.
 
+## Documentation
+
+- `docs/POWERMETRICS_NOTES.md` collects powermetrics details and parser notes.
+
 ```sh
 sudo rasitop [OPTIONS]
 ```
