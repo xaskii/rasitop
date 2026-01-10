@@ -12,3 +12,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1.0.210", features = ["derive"] }
 plist = "1.7.0"
 ctrlc = "3.5"
+
+[dev-dependencies]
+insta = "1.41.1"

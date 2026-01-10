@@ -1,0 +1,30 @@
+---
+source: src/pm.rs
+expression: "&sample"
+---
+PowermetricsSample {
+    timestamp: Some(
+        "2026-01-10T18:30:33Z",
+    ),
+    cpu_power_mw: 364.157,
+    gpu_power_mw: 773.344,
+    combined_power_mw: 1137.5,
+    battery_percent: Some(
+        100,
+    ),
+    cpu_busy_ratio: Some(
+        0.79839115,
+    ),
+    e_busy_ratio: Some(
+        0.695087,
+    ),
+    p_busy_ratio: Some(
+        0.9016953,
+    ),
+    e_freq_hz: Some(
+        1807680000.0,
+    ),
+    p_freq_hz: Some(
+        1645440000.0,
+    ),
+}

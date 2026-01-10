@@ -211,18 +211,7 @@ mod tests {
         let doc: PowermetricsPlist = plist::from_bytes(bytes).expect("plist parse");
         let sample = PowermetricsSample::from_plist(&doc).expect("to sample");
 
-        assert_close(sample.cpu_power_mw, 1941.82, 0.05);
-        assert_close(sample.gpu_power_mw, 0.0, 1e-6);
-        assert_close(sample.combined_power_mw, 1941.82, 0.05);
-        assert_eq!(sample.battery_percent, Some(69));
-
-        assert_close(sample.e_busy_ratio.unwrap(), 1.0 - 0.611736, 1e-6);
-        assert_close(sample.p_busy_ratio.unwrap(), 1.0 - 0.307891, 1e-6);
-
-        assert_close(sample.e_freq_hz.unwrap(), 972_013_000.0, 1_000.0);
-        assert_close(sample.p_freq_hz.unwrap(), 3_089_180_000.0, 1_000.0);
-
-        assert!(sample.timestamp.is_some());
+        insta::assert_debug_snapshot!(&sample);
     }
 
     #[test]
