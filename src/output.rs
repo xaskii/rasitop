@@ -53,7 +53,9 @@ impl CsvFormatter {
 
 impl OutputFormatter for CsvFormatter {
     fn print_header(&self) {
-        println!("timestamp,cpu_power_w,gpu_power_w,combined_power_w,e_busy_ratio,p_busy_ratio,e_freq_ghz,p_freq_ghz,battery_percent");
+        println!(
+            "timestamp,cpu_power_w,gpu_power_w,combined_power_w,e_busy_ratio,p_busy_ratio,e_freq_ghz,p_freq_ghz,battery_percent"
+        );
     }
 
     fn print_sample(&self, sample: &PowermetricsSample) {
@@ -237,8 +239,8 @@ mod tests {
     fn test_formatters_with_high_values() {
         let sample = PowermetricsSample {
             timestamp: Some("2025-12-31T23:59:59Z".to_string()),
-            cpu_power_mw: 50000.0, // 50W
-            gpu_power_mw: 150000.0, // 150W
+            cpu_power_mw: 50000.0,       // 50W
+            gpu_power_mw: 150000.0,      // 150W
             combined_power_mw: 200000.0, // 200W
             battery_percent: Some(100),
             cpu_busy_ratio: Some(1.0),
