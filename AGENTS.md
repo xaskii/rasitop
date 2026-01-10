@@ -13,6 +13,7 @@
 - View history with `jj log` or `jj show @`.
 - Start new work with `jj new`; amend message with `jj describe -m`.
 - The working copy is always a commit (`@`), and `@-` refers to the parent.
+- Prefer the squash workflow, where you describe the work you're going to do, make a new commit, then squash work into it as you go. `jj squash -t <ref>`
 
 ## Build and Test
 
