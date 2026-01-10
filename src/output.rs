@@ -1,8 +1,18 @@
 use crate::pm::PowermetricsSample;
 
 pub trait OutputFormatter {
-    fn print_header(&self);
-    fn print_sample(&self, sample: &PowermetricsSample);
+    fn format_header(&self) -> Option<String>;
+    fn format_sample(&self, sample: &PowermetricsSample) -> String;
+
+    fn print_header(&self) {
+        if let Some(header) = self.format_header() {
+            println!("{header}");
+        }
+    }
+
+    fn print_sample(&self, sample: &PowermetricsSample) {
+        println!("{}", self.format_sample(sample));
+    }
 }
 
 pub struct HumanFormatter;
@@ -14,17 +24,17 @@ impl HumanFormatter {
 }
 
 impl OutputFormatter for HumanFormatter {
-    fn print_header(&self) {
-        // No header for human format
+    fn format_header(&self) -> Option<String> {
+        None
     }
 
-    fn print_sample(&self, sample: &PowermetricsSample) {
+    fn format_sample(&self, sample: &PowermetricsSample) -> String {
         let battery_str = sample
             .battery_percent
             .map(|p| format!(" | Battery: {}%", p))
             .unwrap_or_default();
 
-        println!(
+        format!(
             "[{}] CPU: {:.2}W  GPU: {:.2}W  Combined: {:.2}W | E-busy: {:.1}%  P-busy: {:.1}%  E-freq: {:.2}GHz  P-freq: {:.2}GHz{}",
             sample.timestamp.as_deref().unwrap_or("?"),
             sample.cpu_power_mw / 1000.0,
@@ -35,7 +45,7 @@ impl OutputFormatter for HumanFormatter {
             sample.e_freq_hz.unwrap_or(0.0) / 1e9,
             sample.p_freq_hz.unwrap_or(0.0) / 1e9,
             battery_str,
-        );
+        )
     }
 }
 
@@ -52,18 +62,15 @@ impl CsvFormatter {
 }
 
 impl OutputFormatter for CsvFormatter {
-    fn print_header(&self) {
-        println!(
+    fn format_header(&self) -> Option<String> {
+        Some(
             "timestamp,cpu_power_w,gpu_power_w,combined_power_w,e_busy_ratio,p_busy_ratio,e_freq_ghz,p_freq_ghz,battery_percent"
-        );
+                .to_string(),
+        )
     }
 
-    fn print_sample(&self, sample: &PowermetricsSample) {
-        if !self.header_printed.get() {
-            self.print_header();
-            self.header_printed.set(true);
-        }
-        println!(
+    fn format_sample(&self, sample: &PowermetricsSample) -> String {
+        format!(
             "{},{:.2},{:.2},{:.2},{:.4},{:.4},{:.2},{:.2},{}",
             sample.timestamp.as_deref().unwrap_or(""),
             sample.cpu_power_mw / 1000.0,
@@ -77,7 +84,21 @@ impl OutputFormatter for CsvFormatter {
                 .battery_percent
                 .map(|p| p.to_string())
                 .unwrap_or_default(),
-        );
+        )
+    }
+
+    fn print_header(&self) {
+        if let Some(header) = self.format_header() {
+            println!("{header}");
+        }
+        self.header_printed.set(true);
+    }
+
+    fn print_sample(&self, sample: &PowermetricsSample) {
+        if !self.header_printed.get() {
+            self.print_header();
+        }
+        println!("{}", self.format_sample(sample));
     }
 }
 
@@ -90,11 +111,11 @@ impl JsonFormatter {
 }
 
 impl OutputFormatter for JsonFormatter {
-    fn print_header(&self) {
-        // No header for JSON
+    fn format_header(&self) -> Option<String> {
+        None
     }
 
-    fn print_sample(&self, sample: &PowermetricsSample) {
+    fn format_sample(&self, sample: &PowermetricsSample) -> String {
         // Manually construct JSON to avoid adding serde_json dependency
         let timestamp = sample
             .timestamp
@@ -127,7 +148,7 @@ impl OutputFormatter for JsonFormatter {
             .map(|v| v.to_string())
             .unwrap_or_else(|| "null".to_string());
 
-        println!(
+        format!(
             r#"{{"timestamp":{},"cpu_power_w":{:.2},"gpu_power_w":{:.2},"combined_power_w":{:.2},"e_busy_ratio":{},"p_busy_ratio":{},"e_freq_ghz":{},"p_freq_ghz":{},"battery_percent":{}}}"#,
             timestamp,
             sample.cpu_power_mw / 1000.0,
@@ -138,13 +159,44 @@ impl OutputFormatter for JsonFormatter {
             e_freq,
             p_freq,
             battery,
-        );
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_debug_snapshot;
+
+    #[derive(Debug)]
+    #[allow(dead_code)]
+    struct FormatterOutputs {
+        human: String,
+        csv: String,
+        json: String,
+    }
+
+    #[derive(Debug)]
+    #[allow(dead_code)]
+    struct PartialClusterOutputs {
+        e_cluster: FormatterOutputs,
+        p_cluster: FormatterOutputs,
+    }
+
+    fn format_outputs(sample: &PowermetricsSample) -> FormatterOutputs {
+        let human = HumanFormatter::new().format_sample(sample);
+        let csv_formatter = CsvFormatter::new();
+        let csv_header = csv_formatter.format_header().unwrap_or_default();
+        let csv_sample = csv_formatter.format_sample(sample);
+        let csv = if csv_header.is_empty() {
+            csv_sample
+        } else {
+            format!("{csv_header}\n{csv_sample}")
+        };
+        let json = JsonFormatter::new().format_sample(sample);
+
+        FormatterOutputs { human, csv, json }
+    }
 
     fn sample_for_test() -> PowermetricsSample {
         PowermetricsSample {
@@ -162,30 +214,12 @@ mod tests {
     }
 
     #[test]
-    fn test_human_formatter() {
-        let formatter = HumanFormatter::new();
-        let sample = sample_for_test();
-        // Just verify it doesn't panic
-        formatter.print_sample(&sample);
+    fn snapshot_formatters_default_sample() {
+        assert_debug_snapshot!(format_outputs(&sample_for_test()));
     }
 
     #[test]
-    fn test_csv_formatter() {
-        let formatter = CsvFormatter::new();
-        let sample = sample_for_test();
-        formatter.print_header();
-        formatter.print_sample(&sample);
-    }
-
-    #[test]
-    fn test_json_formatter() {
-        let formatter = JsonFormatter::new();
-        let sample = sample_for_test();
-        formatter.print_sample(&sample);
-    }
-
-    #[test]
-    fn test_formatters_with_missing_optional_fields() {
+    fn snapshot_formatters_with_missing_optional_fields() {
         let sample = PowermetricsSample {
             timestamp: None,
             cpu_power_mw: 1000.0,
@@ -199,19 +233,11 @@ mod tests {
             p_freq_hz: None,
         };
 
-        // All formatters should handle missing fields gracefully
-        let human = HumanFormatter::new();
-        human.print_sample(&sample);
-
-        let csv = CsvFormatter::new();
-        csv.print_sample(&sample);
-
-        let json = JsonFormatter::new();
-        json.print_sample(&sample);
+        assert_debug_snapshot!(format_outputs(&sample));
     }
 
     #[test]
-    fn test_formatters_with_zero_values() {
+    fn snapshot_formatters_with_zero_values() {
         let sample = PowermetricsSample {
             timestamp: Some("2025-01-01T00:00:00Z".to_string()),
             cpu_power_mw: 0.0,
@@ -225,18 +251,11 @@ mod tests {
             p_freq_hz: Some(0.0),
         };
 
-        let human = HumanFormatter::new();
-        human.print_sample(&sample);
-
-        let csv = CsvFormatter::new();
-        csv.print_sample(&sample);
-
-        let json = JsonFormatter::new();
-        json.print_sample(&sample);
+        assert_debug_snapshot!(format_outputs(&sample));
     }
 
     #[test]
-    fn test_formatters_with_high_values() {
+    fn snapshot_formatters_with_high_values() {
         let sample = PowermetricsSample {
             timestamp: Some("2025-12-31T23:59:59Z".to_string()),
             cpu_power_mw: 50000.0,       // 50W
@@ -250,19 +269,11 @@ mod tests {
             p_freq_hz: Some(5.0e9), // 5 GHz
         };
 
-        let human = HumanFormatter::new();
-        human.print_sample(&sample);
-
-        let csv = CsvFormatter::new();
-        csv.print_sample(&sample);
-
-        let json = JsonFormatter::new();
-        json.print_sample(&sample);
+        assert_debug_snapshot!(format_outputs(&sample));
     }
 
     #[test]
-    fn test_formatters_with_partial_cluster_data() {
-        // E-cluster data only
+    fn snapshot_formatters_with_partial_cluster_data() {
         let sample1 = PowermetricsSample {
             timestamp: Some("2025-01-15T12:00:00Z".to_string()),
             cpu_power_mw: 1200.0,
@@ -276,16 +287,6 @@ mod tests {
             p_freq_hz: None,
         };
 
-        let human = HumanFormatter::new();
-        human.print_sample(&sample1);
-
-        let csv = CsvFormatter::new();
-        csv.print_sample(&sample1);
-
-        let json = JsonFormatter::new();
-        json.print_sample(&sample1);
-
-        // P-cluster data only
         let sample2 = PowermetricsSample {
             timestamp: Some("2025-01-15T12:00:01Z".to_string()),
             cpu_power_mw: 3500.0,
@@ -299,8 +300,11 @@ mod tests {
             p_freq_hz: Some(3.2e9),
         };
 
-        human.print_sample(&sample2);
-        csv.print_sample(&sample2);
-        json.print_sample(&sample2);
+        let outputs = PartialClusterOutputs {
+            e_cluster: format_outputs(&sample1),
+            p_cluster: format_outputs(&sample2),
+        };
+
+        assert_debug_snapshot!(outputs);
     }
 }
