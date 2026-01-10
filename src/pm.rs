@@ -46,23 +46,39 @@ impl PowermetricsSample {
         let mut e_freq_hz: Option<f64> = None;
         let mut p_freq_hz: Option<f64> = None;
 
+        let update_max = |target: &mut Option<f64>, candidate: Option<f64>| {
+            if let Some(value) = candidate {
+                match target {
+                    Some(current) if value > *current => {
+                        *current = value;
+                    }
+                    None => {
+                        *target = Some(value);
+                    }
+                    _ => {}
+                }
+            }
+        };
+
+        let is_e_cluster = |name: &str| name.starts_with('E') && name.ends_with("Cluster");
+        let is_p_cluster = |name: &str| name.starts_with('P') && name.ends_with("Cluster");
+
         if let Some(proc) = &doc.processor
             && let Some(clusters) = &proc.clusters
         {
             for c in clusters {
-                if let Some(name) = &c.name {
-                    let busy = c.idle_ratio.map(|r| 1.0 - r);
-                    match name.as_str() {
-                        "E-Cluster" => {
-                            e_busy_ratio = busy;
-                            e_freq_hz = c.freq_hz;
-                        }
-                        "P-Cluster" => {
-                            p_busy_ratio = busy;
-                            p_freq_hz = c.freq_hz;
-                        }
-                        _ => {}
-                    }
+                let name = match &c.name {
+                    Some(name) => name.as_str(),
+                    None => continue,
+                };
+                let busy = c.idle_ratio.map(|r| 1.0 - r);
+
+                if is_e_cluster(name) {
+                    update_max(&mut e_busy_ratio, busy);
+                    update_max(&mut e_freq_hz, c.freq_hz);
+                } else if is_p_cluster(name) {
+                    update_max(&mut p_busy_ratio, busy);
+                    update_max(&mut p_freq_hz, c.freq_hz);
                 }
             }
         }
@@ -188,7 +204,10 @@ mod tests {
 
     #[test]
     fn parses_sample_powermetrics_xml() {
-        let bytes = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/powermetrics.xml"));
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/powermetrics.xml"
+        ));
         let doc: PowermetricsPlist = plist::from_bytes(bytes).expect("plist parse");
         let sample = PowermetricsSample::from_plist(&doc).expect("to sample");
 
@@ -275,7 +294,7 @@ mod tests {
                 ane_energy: None,
                 ane_power: None,
                 clusters: Some(vec![Cluster {
-                    name: Some("E-Cluster".to_string()),
+                    name: Some("E0-Cluster".to_string()),
                     hw_resid_counters: None,
                     freq_hz: Some(1.2e9),
                     idle_ns: None,
@@ -293,6 +312,49 @@ mod tests {
         assert_eq!(sample.p_busy_ratio, None);
         assert_close(sample.e_freq_hz.unwrap(), 1.2e9, 1.0);
         assert_eq!(sample.p_freq_hz, None);
+    }
+
+    #[test]
+    fn aggregates_multiple_p_clusters_with_max() {
+        let doc = PowermetricsPlist {
+            timestamp: None,
+            processor: Some(Processor {
+                cpu_power: Some(2500.0),
+                gpu_power: None,
+                combined_power: None,
+                cpu_energy: None,
+                gpu_energy: None,
+                ane_energy: None,
+                ane_power: None,
+                clusters: Some(vec![
+                    Cluster {
+                        name: Some("P0-Cluster".to_string()),
+                        hw_resid_counters: None,
+                        freq_hz: Some(2.2e9),
+                        idle_ns: None,
+                        idle_ratio: Some(0.2),
+                        dvfm_states: None,
+                        cpus: None,
+                    },
+                    Cluster {
+                        name: Some("P1-Cluster".to_string()),
+                        hw_resid_counters: None,
+                        freq_hz: Some(3.1e9),
+                        idle_ns: None,
+                        idle_ratio: Some(0.4),
+                        dvfm_states: None,
+                        cpus: None,
+                    },
+                ]),
+            }),
+            battery: None,
+            gpu: None,
+        };
+
+        let sample = PowermetricsSample::from_plist(&doc).expect("should parse");
+        assert_close(sample.p_busy_ratio.unwrap(), 0.8, 1e-6);
+        assert_close(sample.p_freq_hz.unwrap(), 3.1e9, 1.0);
+        assert_close(sample.cpu_busy_ratio.unwrap(), 0.8, 1e-6);
     }
 
     #[test]
