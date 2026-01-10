@@ -116,50 +116,21 @@ impl OutputFormatter for JsonFormatter {
     }
 
     fn format_sample(&self, sample: &PowermetricsSample) -> String {
-        // Manually construct JSON to avoid adding serde_json dependency
-        let timestamp = sample
-            .timestamp
-            .as_ref()
-            .map(|s| format!("\"{}\"", s))
-            .unwrap_or_else(|| "null".to_string());
+        let round_two = |value: f64| (value * 100.0).round() / 100.0;
 
-        let e_busy = sample
-            .e_busy_ratio
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "null".to_string());
+        let payload = serde_json::json!({
+            "timestamp": sample.timestamp,
+            "cpu_power_w": round_two(sample.cpu_power_mw / 1000.0),
+            "gpu_power_w": round_two(sample.gpu_power_mw / 1000.0),
+            "combined_power_w": round_two(sample.combined_power_mw / 1000.0),
+            "e_busy_ratio": sample.e_busy_ratio,
+            "p_busy_ratio": sample.p_busy_ratio,
+            "e_freq_ghz": sample.e_freq_hz.map(|v| round_two(v / 1e9)),
+            "p_freq_ghz": sample.p_freq_hz.map(|v| round_two(v / 1e9)),
+            "battery_percent": sample.battery_percent,
+        });
 
-        let p_busy = sample
-            .p_busy_ratio
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "null".to_string());
-
-        let e_freq = sample
-            .e_freq_hz
-            .map(|v| format!("{:.2}", v / 1e9))
-            .unwrap_or_else(|| "null".to_string());
-
-        let p_freq = sample
-            .p_freq_hz
-            .map(|v| format!("{:.2}", v / 1e9))
-            .unwrap_or_else(|| "null".to_string());
-
-        let battery = sample
-            .battery_percent
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "null".to_string());
-
-        format!(
-            r#"{{"timestamp":{},"cpu_power_w":{:.2},"gpu_power_w":{:.2},"combined_power_w":{:.2},"e_busy_ratio":{},"p_busy_ratio":{},"e_freq_ghz":{},"p_freq_ghz":{},"battery_percent":{}}}"#,
-            timestamp,
-            sample.cpu_power_mw / 1000.0,
-            sample.gpu_power_mw / 1000.0,
-            sample.combined_power_mw / 1000.0,
-            e_busy,
-            p_busy,
-            e_freq,
-            p_freq,
-            battery,
-        )
+        serde_json::to_string(&payload).expect("json serialize")
     }
 }
 
