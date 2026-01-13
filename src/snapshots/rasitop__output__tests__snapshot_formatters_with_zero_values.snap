@@ -3,7 +3,7 @@ source: src/output.rs
 expression: format_outputs(&sample)
 ---
 FormatterOutputs {
-    human: "[2025-01-01T00:00:00Z] CPU: 0.00W  GPU: 0.00W  Combined: 0.00W | E-busy: 0.0%  P-busy: 0.0%  E-freq: 0.00GHz  P-freq: 0.00GHz | Battery: 0%",
-    csv: "timestamp,cpu_power_w,gpu_power_w,combined_power_w,e_busy_ratio,p_busy_ratio,e_freq_ghz,p_freq_ghz,battery_percent\n2025-01-01T00:00:00Z,0.00,0.00,0.00,0.0000,0.0000,0.00,0.00,0",
-    json: "{\"battery_percent\":0,\"combined_power_w\":0.0,\"cpu_power_w\":0.0,\"e_busy_ratio\":0.0,\"e_freq_ghz\":0.0,\"gpu_power_w\":0.0,\"p_busy_ratio\":0.0,\"p_freq_ghz\":0.0,\"timestamp\":\"2025-01-01T00:00:00Z\"}",
+    human: "[2025-01-01T00:00:00Z] CPU: 0.00W  GPU: 0.00W  ANE: 0.00W  Combined: 0.00W | E-busy: 0.0%  P-busy: 0.0%  E-freq: 0.00GHz  P-freq: 0.00GHz | Battery: 0%",
+    csv: "timestamp,cpu_power_w,gpu_power_w,ane_power_w,combined_power_w,cpu_energy,gpu_energy,ane_energy,e_busy_ratio,p_busy_ratio,e_freq_ghz,p_freq_ghz,battery_percent\n2025-01-01T00:00:00Z,0.00,0.00,0.00,0.00,0,0,0,0.0000,0.0000,0.00,0.00,0",
+    json: "{\"ane_energy\":0,\"ane_power_w\":0.0,\"battery_percent\":0,\"combined_power_w\":0.0,\"cpu_energy\":0,\"cpu_power_w\":0.0,\"e_busy_ratio\":0.0,\"e_freq_ghz\":0.0,\"gpu_energy\":0,\"gpu_power_w\":0.0,\"p_busy_ratio\":0.0,\"p_freq_ghz\":0.0,\"timestamp\":\"2025-01-01T00:00:00Z\"}",
 }

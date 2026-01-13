@@ -3,7 +3,7 @@ source: src/output.rs
 expression: format_outputs(&sample)
 ---
 FormatterOutputs {
-    human: "[2025-12-31T23:59:59Z] CPU: 50.00W  GPU: 150.00W  Combined: 200.00W | E-busy: 100.0%  P-busy: 100.0%  E-freq: 4.00GHz  P-freq: 5.00GHz | Battery: 100%",
-    csv: "timestamp,cpu_power_w,gpu_power_w,combined_power_w,e_busy_ratio,p_busy_ratio,e_freq_ghz,p_freq_ghz,battery_percent\n2025-12-31T23:59:59Z,50.00,150.00,200.00,1.0000,1.0000,4.00,5.00,100",
-    json: "{\"battery_percent\":100,\"combined_power_w\":200.0,\"cpu_power_w\":50.0,\"e_busy_ratio\":1.0,\"e_freq_ghz\":4.0,\"gpu_power_w\":150.0,\"p_busy_ratio\":1.0,\"p_freq_ghz\":5.0,\"timestamp\":\"2025-12-31T23:59:59Z\"}",
+    human: "[2025-12-31T23:59:59Z] CPU: 50.00W  GPU: 150.00W  ANE: 10.00W  Combined: 200.00W | E-busy: 100.0%  P-busy: 100.0%  E-freq: 4.00GHz  P-freq: 5.00GHz | Battery: 100%",
+    csv: "timestamp,cpu_power_w,gpu_power_w,ane_power_w,combined_power_w,cpu_energy,gpu_energy,ane_energy,e_busy_ratio,p_busy_ratio,e_freq_ghz,p_freq_ghz,battery_percent\n2025-12-31T23:59:59Z,50.00,150.00,10.00,200.00,25000,75000,5000,1.0000,1.0000,4.00,5.00,100",
+    json: "{\"ane_energy\":5000,\"ane_power_w\":10.0,\"battery_percent\":100,\"combined_power_w\":200.0,\"cpu_energy\":25000,\"cpu_power_w\":50.0,\"e_busy_ratio\":1.0,\"e_freq_ghz\":4.0,\"gpu_energy\":75000,\"gpu_power_w\":150.0,\"p_busy_ratio\":1.0,\"p_freq_ghz\":5.0,\"timestamp\":\"2025-12-31T23:59:59Z\"}",
 }
