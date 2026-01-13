@@ -35,10 +35,11 @@ impl OutputFormatter for HumanFormatter {
             .unwrap_or_default();
 
         format!(
-            "[{}] CPU: {:.2}W  GPU: {:.2}W  Combined: {:.2}W | E-busy: {:.1}%  P-busy: {:.1}%  E-freq: {:.2}GHz  P-freq: {:.2}GHz{}",
+            "[{}] CPU: {:.2}W  GPU: {:.2}W  ANE: {:.2}W  Combined: {:.2}W | E-busy: {:.1}%  P-busy: {:.1}%  E-freq: {:.2}GHz  P-freq: {:.2}GHz{}",
             sample.timestamp.as_deref().unwrap_or("?"),
             sample.cpu_power_mw / 1000.0,
             sample.gpu_power_mw / 1000.0,
+            sample.ane_power_mw / 1000.0,
             sample.combined_power_mw / 1000.0,
             sample.e_busy_ratio.unwrap_or(0.0) * 100.0,
             sample.p_busy_ratio.unwrap_or(0.0) * 100.0,
@@ -64,18 +65,22 @@ impl CsvFormatter {
 impl OutputFormatter for CsvFormatter {
     fn format_header(&self) -> Option<String> {
         Some(
-            "timestamp,cpu_power_w,gpu_power_w,combined_power_w,e_busy_ratio,p_busy_ratio,e_freq_ghz,p_freq_ghz,battery_percent"
+            "timestamp,cpu_power_w,gpu_power_w,ane_power_w,combined_power_w,cpu_energy,gpu_energy,ane_energy,e_busy_ratio,p_busy_ratio,e_freq_ghz,p_freq_ghz,battery_percent"
                 .to_string(),
         )
     }
 
     fn format_sample(&self, sample: &PowermetricsSample) -> String {
         format!(
-            "{},{:.2},{:.2},{:.2},{:.4},{:.4},{:.2},{:.2},{}",
+            "{},{:.2},{:.2},{:.2},{:.2},{},{},{},{:.4},{:.4},{:.2},{:.2},{}",
             sample.timestamp.as_deref().unwrap_or(""),
             sample.cpu_power_mw / 1000.0,
             sample.gpu_power_mw / 1000.0,
+            sample.ane_power_mw / 1000.0,
             sample.combined_power_mw / 1000.0,
+            sample.cpu_energy.map(|e| e.to_string()).unwrap_or_default(),
+            sample.gpu_energy.map(|e| e.to_string()).unwrap_or_default(),
+            sample.ane_energy.map(|e| e.to_string()).unwrap_or_default(),
             sample.e_busy_ratio.unwrap_or(0.0),
             sample.p_busy_ratio.unwrap_or(0.0),
             sample.e_freq_hz.unwrap_or(0.0) / 1e9,
@@ -122,7 +127,11 @@ impl OutputFormatter for JsonFormatter {
             "timestamp": sample.timestamp,
             "cpu_power_w": round_two(sample.cpu_power_mw / 1000.0),
             "gpu_power_w": round_two(sample.gpu_power_mw / 1000.0),
+            "ane_power_w": round_two(sample.ane_power_mw / 1000.0),
             "combined_power_w": round_two(sample.combined_power_mw / 1000.0),
+            "cpu_energy": sample.cpu_energy,
+            "gpu_energy": sample.gpu_energy,
+            "ane_energy": sample.ane_energy,
             "e_busy_ratio": sample.e_busy_ratio,
             "p_busy_ratio": sample.p_busy_ratio,
             "e_freq_ghz": sample.e_freq_hz.map(|v| round_two(v / 1e9)),
@@ -174,7 +183,11 @@ mod tests {
             timestamp: Some("2025-04-26T21:49:40Z".to_string()),
             cpu_power_mw: 1941.82,
             gpu_power_mw: 0.0,
+            ane_power_mw: 0.0,
             combined_power_mw: 1941.82,
+            cpu_energy: Some(500),
+            gpu_energy: Some(0),
+            ane_energy: Some(0),
             battery_percent: Some(69),
             cpu_busy_ratio: Some(0.5),
             e_busy_ratio: Some(0.388264),
@@ -195,7 +208,11 @@ mod tests {
             timestamp: None,
             cpu_power_mw: 1000.0,
             gpu_power_mw: 500.0,
+            ane_power_mw: 0.0,
             combined_power_mw: 1500.0,
+            cpu_energy: None,
+            gpu_energy: None,
+            ane_energy: None,
             battery_percent: None,
             cpu_busy_ratio: None,
             e_busy_ratio: None,
@@ -213,7 +230,11 @@ mod tests {
             timestamp: Some("2025-01-01T00:00:00Z".to_string()),
             cpu_power_mw: 0.0,
             gpu_power_mw: 0.0,
+            ane_power_mw: 0.0,
             combined_power_mw: 0.0,
+            cpu_energy: Some(0),
+            gpu_energy: Some(0),
+            ane_energy: Some(0),
             battery_percent: Some(0),
             cpu_busy_ratio: Some(0.0),
             e_busy_ratio: Some(0.0),
@@ -231,7 +252,11 @@ mod tests {
             timestamp: Some("2025-12-31T23:59:59Z".to_string()),
             cpu_power_mw: 50000.0,       // 50W
             gpu_power_mw: 150000.0,      // 150W
+            ane_power_mw: 10000.0,       // 10W
             combined_power_mw: 200000.0, // 200W
+            cpu_energy: Some(25000),
+            gpu_energy: Some(75000),
+            ane_energy: Some(5000),
             battery_percent: Some(100),
             cpu_busy_ratio: Some(1.0),
             e_busy_ratio: Some(1.0),
@@ -249,7 +274,11 @@ mod tests {
             timestamp: Some("2025-01-15T12:00:00Z".to_string()),
             cpu_power_mw: 1200.0,
             gpu_power_mw: 0.0,
+            ane_power_mw: 0.0,
             combined_power_mw: 1200.0,
+            cpu_energy: Some(600),
+            gpu_energy: Some(0),
+            ane_energy: Some(0),
             battery_percent: Some(50),
             cpu_busy_ratio: None,
             e_busy_ratio: Some(0.5),
@@ -262,7 +291,11 @@ mod tests {
             timestamp: Some("2025-01-15T12:00:01Z".to_string()),
             cpu_power_mw: 3500.0,
             gpu_power_mw: 200.0,
+            ane_power_mw: 0.0,
             combined_power_mw: 3700.0,
+            cpu_energy: Some(1750),
+            gpu_energy: Some(100),
+            ane_energy: Some(0),
             battery_percent: Some(49),
             cpu_busy_ratio: None,
             e_busy_ratio: None,

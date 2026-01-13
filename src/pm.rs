@@ -6,6 +6,10 @@ pub struct PowermetricsSample {
     pub cpu_power_mw: f64,
     pub gpu_power_mw: f64,
     pub combined_power_mw: f64,
+    pub ane_power_mw: f64,
+    pub cpu_energy: Option<u64>,
+    pub gpu_energy: Option<u64>,
+    pub ane_energy: Option<u64>,
     pub battery_percent: Option<u8>,
     #[allow(dead_code)]
     pub cpu_busy_ratio: Option<f64>,
@@ -33,11 +37,19 @@ impl PowermetricsSample {
             .as_ref()
             .and_then(|p| p.gpu_power)
             .unwrap_or(0.0);
+        let ane_power_mw = doc
+            .processor
+            .as_ref()
+            .and_then(|p| p.ane_power)
+            .unwrap_or(0.0);
         let combined_power_mw = doc
             .processor
             .as_ref()
             .and_then(|p| p.combined_power)
-            .unwrap_or(cpu_power_mw + gpu_power_mw);
+            .unwrap_or(cpu_power_mw + gpu_power_mw + ane_power_mw);
+        let cpu_energy = doc.processor.as_ref().and_then(|p| p.cpu_energy);
+        let gpu_energy = doc.processor.as_ref().and_then(|p| p.gpu_energy);
+        let ane_energy = doc.processor.as_ref().and_then(|p| p.ane_energy);
         let battery_percent = doc.battery.as_ref().and_then(|b| b.percent_charge);
 
         // Derive busy ratios and cluster freqs if present
@@ -95,6 +107,10 @@ impl PowermetricsSample {
             cpu_power_mw,
             gpu_power_mw,
             combined_power_mw,
+            ane_power_mw,
+            cpu_energy,
+            gpu_energy,
+            ane_energy,
             battery_percent,
             cpu_busy_ratio,
             e_busy_ratio,
@@ -235,8 +251,12 @@ mod tests {
         let sample = PowermetricsSample::from_plist(&doc).expect("should parse");
         assert_close(sample.cpu_power_mw, 1000.0, 0.01);
         assert_close(sample.gpu_power_mw, 200.0, 0.01);
+        assert_close(sample.ane_power_mw, 0.0, 0.01);
         assert_close(sample.combined_power_mw, 1200.0, 0.01);
         assert_eq!(sample.battery_percent, None);
+        assert_eq!(sample.cpu_energy, None);
+        assert_eq!(sample.gpu_energy, None);
+        assert_eq!(sample.ane_energy, None);
     }
 
     #[test]

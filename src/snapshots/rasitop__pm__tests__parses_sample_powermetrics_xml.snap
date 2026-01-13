@@ -9,6 +9,16 @@ PowermetricsSample {
     cpu_power_mw: 364.157,
     gpu_power_mw: 773.344,
     combined_power_mw: 1137.5,
+    ane_power_mw: 0.0,
+    cpu_energy: Some(
+        372,
+    ),
+    gpu_energy: Some(
+        790,
+    ),
+    ane_energy: Some(
+        0,
+    ),
     battery_percent: Some(
         100,
     ),
