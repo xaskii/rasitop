@@ -46,7 +46,7 @@ impl PowermetricsSample {
             .processor
             .as_ref()
             .and_then(|p| p.combined_power)
-            .unwrap_or(cpu_power_mw + gpu_power_mw);
+            .unwrap_or(cpu_power_mw + gpu_power_mw + ane_power_mw);
         let cpu_energy = doc.processor.as_ref().and_then(|p| p.cpu_energy);
         let gpu_energy = doc.processor.as_ref().and_then(|p| p.gpu_energy);
         let ane_energy = doc.processor.as_ref().and_then(|p| p.ane_energy);
