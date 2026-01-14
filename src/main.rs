@@ -89,6 +89,20 @@ async fn run() -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    if std::env::consts::OS != "macos" {
+        anyhow::bail!(
+            "rasitop requires macOS (detected OS: {})",
+            std::env::consts::OS
+        );
+    }
+
+    let powermetrics_check = std::process::Command::new("which")
+        .arg("powermetrics")
+        .output();
+    if !matches!(powermetrics_check, Ok(ref output) if output.status.success()) {
+        anyhow::bail!("powermetrics not found. It should be included with macOS.");
+    }
+
     // TODO: validate that the interval is greater than 100ms. The min
     // collection interval that I found powermetrics is able to do is 22ms.
     // When we switch to read directly from SMC, we can probably go lower, but
