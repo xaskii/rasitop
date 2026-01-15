@@ -5,7 +5,10 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.98"
+chrono = "0.4.41"
 clap = { version = "4.5.37", features = ["derive"] }
+core-foundation = "0.10.1"
+libc = "0.2.172"
 tokio = { version = "1.44.2", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -9,7 +9,9 @@ use tracing::{debug, info, warn};
 use tracing_subscriber::EnvFilter;
 
 mod output;
+mod metrics;
 mod pm;
+mod sources;
 
 #[derive(Parser, Debug)]
 #[command(version)]
