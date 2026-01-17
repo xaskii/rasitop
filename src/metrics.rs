@@ -137,7 +137,7 @@ fn avg_f32(values: &[f32]) -> Option<f32> {
     }
 }
 
-fn init_smc() -> Result<(SMC, Vec<String>, Vec<String>), Box<dyn std::error::Error>> {
+fn init_smc() -> anyhow::Result<(SMC, Vec<String>, Vec<String>)> {
     let mut smc = SMC::new()?;
     const FLOAT_TYPE: u32 = 1718383648; // FourCC: "flt "
 
@@ -169,7 +169,11 @@ fn init_smc() -> Result<(SMC, Vec<String>, Vec<String>), Box<dyn std::error::Err
     Ok((smc, cpu_sensors, gpu_sensors))
 }
 
-fn get_temp_smc(smc: &mut SMC, cpu_keys: &[String], gpu_keys: &[String]) -> Result<(Option<f32>, Option<f32>), Box<dyn std::error::Error>> {
+fn get_temp_smc(
+    smc: &mut SMC,
+    cpu_keys: &[String],
+    gpu_keys: &[String],
+) -> anyhow::Result<(Option<f32>, Option<f32>)> {
     let mut cpu_metrics = Vec::new();
     for sensor in cpu_keys {
         let val = smc.read_val(sensor)?;
@@ -191,7 +195,7 @@ fn get_temp_smc(smc: &mut SMC, cpu_keys: &[String], gpu_keys: &[String]) -> Resu
     Ok((avg_f32(&cpu_metrics), avg_f32(&gpu_metrics)))
 }
 
-fn get_temp_hid(hid: &IOHIDSensors) -> Result<(Option<f32>, Option<f32>), Box<dyn std::error::Error>> {
+fn get_temp_hid(hid: &IOHIDSensors) -> anyhow::Result<(Option<f32>, Option<f32>)> {
     let metrics = hid.get_metrics();
 
     let mut cpu_values = Vec::new();
@@ -222,7 +226,7 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new() -> anyhow::Result<Self> {
         let channels = vec![
             ("Energy Model", None),
             ("CPU Stats", Some(CPU_FREQ_CORE_SUBG)),
@@ -236,7 +240,7 @@ impl Sampler {
         Ok(Self { soc, ior, hid, smc, smc_cpu_keys, smc_gpu_keys })
     }
 
-    fn get_temp(&mut self) -> Result<(Option<f32>, Option<f32>), Box<dyn std::error::Error>> {
+    fn get_temp(&mut self) -> anyhow::Result<(Option<f32>, Option<f32>)> {
         if !self.smc_cpu_keys.is_empty() {
             get_temp_smc(&mut self.smc, &self.smc_cpu_keys, &self.smc_gpu_keys)
         } else {
@@ -244,19 +248,19 @@ impl Sampler {
         }
     }
 
-    fn get_mem(&self) -> Result<(u64, u64, u64, u64), Box<dyn std::error::Error>> {
+    fn get_mem(&self) -> anyhow::Result<(u64, u64, u64, u64)> {
         let (ram_usage, ram_total) = libc_ram()?;
         let (swap_usage, swap_total) = libc_swap()?;
         Ok((ram_usage, ram_total, swap_usage, swap_total))
     }
 
-    fn get_sys_power(&mut self) -> Result<f64, Box<dyn std::error::Error>> {
+    fn get_sys_power(&mut self) -> anyhow::Result<f64> {
         let val = self.smc.read_val("PSTR")?;
         let val = f32::from_le_bytes(val.data.clone().try_into().unwrap());
         Ok(val as f64)
     }
 
-    pub fn sample(&mut self, duration_ms: u32) -> Result<Sample, Box<dyn std::error::Error>> {
+    pub fn sample(&mut self, duration_ms: u32) -> anyhow::Result<Sample> {
         let measures: usize = 4;
         let mut results: Vec<MetricsSample> = Vec::with_capacity(measures);
 

@@ -24,9 +24,10 @@ use core_foundation::{
     number::{CFNumberCreate, CFNumberRef, kCFNumberSInt32Type},
     string::{CFStringCreateWithBytesNoCopy, CFStringGetCString, CFStringRef, kCFStringEncodingUTF8},
 };
+use anyhow::{anyhow, bail};
+use crate::error::RasitopError;
 use serde::Serialize;
 
-pub type WithError<T> = Result<T, Box<dyn std::error::Error>>;
 pub type CVoidRef = *const std::ffi::c_void;
 
 // MARK: CF utils
@@ -149,11 +150,11 @@ fn cfio_get_channel(item: CFDictionaryRef) -> String {
     }
 }
 
-pub fn cfio_get_props(entry: u32, name: String) -> WithError<CFDictionaryRef> {
+pub fn cfio_get_props(entry: u32, name: String) -> anyhow::Result<CFDictionaryRef> {
     unsafe {
         let mut props: MaybeUninit<CFMutableDictionaryRef> = MaybeUninit::uninit();
         if IORegistryEntryCreateCFProperties(entry, props.as_mut_ptr(), kCFAllocatorDefault, 0) != 0 {
-            return Err(format!("Failed to get properties for {}", name).into());
+            bail!("Failed to get properties for {}", name);
         }
 
         Ok(props.assume_init())
@@ -173,14 +174,14 @@ pub fn cfio_get_residencies(item: CFDictionaryRef) -> Vec<(String, i64)> {
     res
 }
 
-pub fn cfio_watts(item: CFDictionaryRef, unit: &str, duration: u64) -> WithError<f32> {
+pub fn cfio_watts(item: CFDictionaryRef, unit: &str, duration: u64) -> anyhow::Result<f32> {
     let val = unsafe { IOReportSimpleGetIntegerValue(item, 0) } as f32;
     let val = val / (duration as f32 / 1000.0);
     match unit {
         "mJ" => Ok(val / 1e3f32),
         "uJ" => Ok(val / 1e6f32),
         "nJ" => Ok(val / 1e9f32),
-        _ => Err(format!("Invalid energy unit: {}", unit).into()),
+        _ => Err(anyhow!("Invalid energy unit: {}", unit)),
     }
 }
 
@@ -191,13 +192,13 @@ pub struct IOServiceIterator {
 }
 
 impl IOServiceIterator {
-    pub fn new(service_name: &str) -> WithError<Self> {
+    pub fn new(service_name: &str) -> anyhow::Result<Self> {
         let service_name = std::ffi::CString::new(service_name).unwrap();
         let existing = unsafe {
             let service = IOServiceMatching(service_name.as_ptr() as _);
             let mut existing = 0;
             if IOServiceGetMatchingServices(0, service, &mut existing) != 0 {
-                return Err(format!("{} not found", service_name.to_string_lossy()).into());
+                bail!("{} not found", service_name.to_string_lossy());
             }
             existing
         };
@@ -290,7 +291,7 @@ impl Iterator for IOReportIterator {
 
 // MARK: IOReport
 
-fn cfio_get_chan(items: Vec<(&str, Option<&str>)>) -> WithError<CFMutableDictionaryRef> {
+fn cfio_get_chan(items: Vec<(&str, Option<&str>)>) -> anyhow::Result<CFMutableDictionaryRef> {
     if items.is_empty() {
         unsafe {
             let c = IOReportCopyAllChannels(0, 0);
@@ -326,17 +327,17 @@ fn cfio_get_chan(items: Vec<(&str, Option<&str>)>) -> WithError<CFMutableDiction
     }
 
     if cfdict_get_val(chan, "IOReportChannels").is_none() {
-        return Err("Failed to get channels".into());
+        bail!("Failed to get channels");
     }
 
     Ok(chan)
 }
 
-fn cfio_get_subs(chan: CFMutableDictionaryRef) -> WithError<IOReportSubscriptionRef> {
+fn cfio_get_subs(chan: CFMutableDictionaryRef) -> anyhow::Result<IOReportSubscriptionRef> {
     let mut s: MaybeUninit<CFMutableDictionaryRef> = MaybeUninit::uninit();
     let rs = unsafe { IOReportCreateSubscription(null(), chan, s.as_mut_ptr(), 0, null()) };
     if rs.is_null() {
-        return Err("Failed to create subscription".into());
+        bail!("Failed to create subscription");
     }
 
     unsafe { s.assume_init() };
@@ -350,7 +351,7 @@ pub struct IOReport {
 }
 
 impl IOReport {
-    pub fn new(channels: Vec<(&str, Option<&str>)>) -> WithError<Self> {
+    pub fn new(channels: Vec<(&str, Option<&str>)>) -> anyhow::Result<Self> {
         let chan = cfio_get_chan(channels)?;
         let subs = cfio_get_subs(chan)?;
         Ok(Self { subs, chan, prev: None })
@@ -402,10 +403,9 @@ impl Drop for IOReport {
 
 // MARK: RAM
 
-pub fn libc_ram() -> WithError<(u64, u64)> {
-    let (mut usage, mut total) = (0u64, 0u64);
-
-    unsafe {
+pub fn libc_ram() -> anyhow::Result<(u64, u64)> {
+    let total = unsafe {
+        let mut total = 0u64;
         let mut name = [libc::CTL_HW, libc::HW_MEMSIZE];
         let mut size = std::mem::size_of::<u64>();
         let ret_code = libc::sysctl(
@@ -418,11 +418,12 @@ pub fn libc_ram() -> WithError<(u64, u64)> {
         );
 
         if ret_code != 0 {
-            return Err("Failed to get total memory".into());
+            bail!("Failed to get total memory");
         }
-    }
+        total
+    };
 
-    unsafe {
+    let usage = unsafe {
         let mut count: u32 = libc::HOST_VM_INFO64_COUNT as _;
         let mut stats = std::mem::zeroed::<libc::vm_statistics64>();
 
@@ -435,27 +436,25 @@ pub fn libc_ram() -> WithError<(u64, u64)> {
         );
 
         if ret_code != 0 {
-            return Err("Failed to get memory stats".into());
+            bail!("Failed to get memory stats");
         }
 
         let page_size_kb = libc::sysconf(libc::_SC_PAGESIZE) as u64;
 
-        usage = (stats.active_count as u64
+        (stats.active_count as u64
             + stats.inactive_count as u64
             + stats.wire_count as u64
             + stats.speculative_count as u64
             + stats.compressor_page_count as u64
             - stats.purgeable_count as u64
             - stats.external_page_count as u64)
-            * page_size_kb;
-    }
+            * page_size_kb
+    };
 
     Ok((usage, total))
 }
 
-pub fn libc_swap() -> WithError<(u64, u64)> {
-    let (mut usage, mut total) = (0u64, 0u64);
-
+pub fn libc_swap() -> anyhow::Result<(u64, u64)> {
     unsafe {
         let mut name = [libc::CTL_VM, libc::VM_SWAPUSAGE];
         let mut size = std::mem::size_of::<libc::xsw_usage>();
@@ -471,14 +470,11 @@ pub fn libc_swap() -> WithError<(u64, u64)> {
         );
 
         if ret_code != 0 {
-            return Err("Failed to get swap usage".into());
+            bail!("Failed to get swap usage");
         }
 
-        usage = xsw.xsu_used;
-        total = xsw.xsu_total;
+        Ok((xsw.xsu_used, xsw.xsu_total))
     }
-
-    Ok((usage, total))
 }
 
 // MARK: SocInfo
@@ -497,7 +493,7 @@ pub struct SocInfo {
 }
 
 impl SocInfo {
-    pub fn new() -> WithError<Self> {
+    pub fn new() -> anyhow::Result<Self> {
         get_soc_info()
     }
 }
@@ -520,7 +516,7 @@ pub fn get_dvfs_mhz(dict: CFDictionaryRef, key: &str) -> (Vec<u32>, Vec<u32>) {
     }
 }
 
-pub fn run_system_profiler() -> WithError<serde_json::Value> {
+pub fn run_system_profiler() -> anyhow::Result<serde_json::Value> {
     let out = std::process::Command::new("system_profiler")
         .args(["SPHardwareDataType", "SPDisplaysDataType", "SPSoftwareDataType", "-json"])
         .output()?;
@@ -534,7 +530,7 @@ fn to_mhz(vals: Vec<u32>, scale: u32) -> Vec<u32> {
     vals.iter().map(|x| *x / scale).collect()
 }
 
-pub fn get_soc_info() -> WithError<SocInfo> {
+pub fn get_soc_info() -> anyhow::Result<SocInfo> {
     let out = run_system_profiler()?;
     let mut info = SocInfo::default();
 
@@ -587,7 +583,7 @@ pub fn get_soc_info() -> WithError<SocInfo> {
     }
 
     if info.ecpu_freqs.is_empty() || info.pcpu_freqs.is_empty() {
-        return Err("No CPU frequencies found".into());
+        bail!(RasitopError::MissingCpuFrequencies);
     }
 
     Ok(info)
@@ -631,7 +627,7 @@ pub struct IOHIDSensors {
 }
 
 impl IOHIDSensors {
-    pub fn new() -> WithError<Self> {
+    pub fn new() -> anyhow::Result<Self> {
         let keys = [cfstr("PrimaryUsagePage"), cfstr("PrimaryUsage")];
         let nums = [cfnum(kHIDPage_AppleVendor), cfnum(kHIDUsage_AppleVendor_TemperatureSensor)];
 
@@ -773,14 +769,14 @@ pub struct SMC {
 }
 
 impl SMC {
-    pub fn new() -> WithError<Self> {
+    pub fn new() -> anyhow::Result<Self> {
         let mut conn = 0;
 
         for (device, name) in IOServiceIterator::new("AppleSMC")? {
             if name == "AppleSMCKeysEndpoint" {
                 let rs = unsafe { IOServiceOpen(device, mach_task_self(), 0, &mut conn) };
                 if rs != 0 {
-                    return Err(format!("IOServiceOpen: {}", rs).into());
+                    bail!("IOServiceOpen: {}", rs);
                 }
             }
         }
@@ -788,7 +784,7 @@ impl SMC {
         Ok(Self { conn, keys: HashMap::new() })
     }
 
-    fn read(&self, input: &KeyData) -> WithError<KeyData> {
+    fn read(&self, input: &KeyData) -> anyhow::Result<KeyData> {
         let ival = input as *const _ as _;
         let ilen = size_of::<KeyData>();
         let mut oval = KeyData::default();
@@ -797,29 +793,29 @@ impl SMC {
         let rs = unsafe { IOConnectCallStructMethod(self.conn, 2, ival, ilen, &mut oval as *mut _ as _, &mut olen) };
 
         if rs != 0 {
-            return Err(format!("IOConnectCallStructMethod: {}", rs).into());
+            bail!("IOConnectCallStructMethod: {}", rs);
         }
 
         if oval.result == 132 {
-            return Err("SMC key not found".into());
+            bail!("SMC key not found");
         }
 
         if oval.result != 0 {
-            return Err(format!("SMC error: {}", oval.result).into());
+            bail!("SMC error: {}", oval.result);
         }
 
         Ok(oval)
     }
 
-    pub fn key_by_index(&self, index: u32) -> WithError<String> {
+    pub fn key_by_index(&self, index: u32) -> anyhow::Result<String> {
         let ival = KeyData { data8: 8, data32: index, ..Default::default() };
         let oval = self.read(&ival)?;
         Ok(std::str::from_utf8(&oval.key.to_be_bytes()).unwrap().to_string())
     }
 
-    pub fn read_key_info(&mut self, key: &str) -> WithError<KeyInfo> {
+    pub fn read_key_info(&mut self, key: &str) -> anyhow::Result<KeyInfo> {
         if key.len() != 4 {
-            return Err("SMC key must be 4 bytes long".into());
+            bail!("SMC key must be 4 bytes long");
         }
 
         let key = key.bytes().fold(0, |acc, x| (acc << 8) + x as u32);
@@ -833,7 +829,7 @@ impl SMC {
         Ok(oval.key_info)
     }
 
-    pub fn read_val(&mut self, key: &str) -> WithError<SensorVal> {
+    pub fn read_val(&mut self, key: &str) -> anyhow::Result<SensorVal> {
         let name = key.to_string();
 
         let key_info = self.read_key_info(key)?;
@@ -848,7 +844,7 @@ impl SMC {
         })
     }
 
-    pub fn read_all_keys(&mut self) -> WithError<Vec<String>> {
+    pub fn read_all_keys(&mut self) -> anyhow::Result<Vec<String>> {
         let val = self.read_val("#KEY")?;
         let val = u32::from_be_bytes(val.data[0..4].try_into().unwrap());
 
