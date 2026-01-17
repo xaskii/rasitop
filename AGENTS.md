@@ -3,9 +3,7 @@
 ## Repo Notes
 
 - Version control uses Jujutsu (`jj`) alongside git; prefer `jj status`, `jj diff`, and `jj commit`.
-- `powermetrics` cluster names vary across machines (e.g., `E-Cluster`, `E0-Cluster`, `P-Cluster`, `P0-Cluster`, `P1-Cluster`).
-- rasitop aggregates E/P cluster metrics by taking the **max** `freq_hz` and max busy ratio across matching clusters.
-- `fixtures/powermetrics.xml` is a lightweight fixture; use a fresh `powermetrics -f plist` capture when updating parser expectations.
+- rasitop aggregates per-core E/P metrics by taking the **max** busy ratio and max frequency across cores.
 
 ## Jujutsu Workflow
 
@@ -24,5 +22,5 @@
 
 ## Runtime Checks
 
-- Try `cargo run -- --from-file fixtures/powermetrics.xml --format human` to sanity-check parsing.
-- Live sampling requires `sudo` (powermetrics); stop with Ctrl-C to verify shutdown.
+- Try `cargo run -- --format human` to sanity-check live sampling output.
+- Stop with Ctrl-C to verify clean shutdown.

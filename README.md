@@ -1,6 +1,7 @@
 # Rasitop
 
-Intended to be a rewrite of asitop in Rust, but not sure what direction I'm gonna go with this.
+Sudoless performance monitoring for Apple Silicon. This is still evolving, with a
+longer term goal of becoming a menubar app.
 
 ## Development Setup
 
@@ -11,14 +12,11 @@ cargo build --bin rasitop (only guaranteed to build on stable)
 
 ## Usage
 
-Rasitop requires `sudo` to run `powermetrics` under the hood.
-
-## Documentation
-
-- `docs/POWERMETRICS_NOTES.md` collects powermetrics details and parser notes.
+Rasitop uses private macOS APIs (IOReport, SMC, and IOHID) to sample power and
+utilization without sudo. These APIs can change across macOS releases.
 
 ```sh
-sudo rasitop [OPTIONS]
+rasitop [OPTIONS]
 ```
 
 ### Options
@@ -27,9 +25,6 @@ sudo rasitop [OPTIONS]
 |------|-------------|---------|
 | `-i, --interval <SECONDS>` | Refresh interval in seconds | `1` |
 | `--format <FORMAT>` | Output format: `json`, `csv`, or `human` | `human` |
-| `--log-level <LEVEL>` | Log level: `error`, `warn`, `info`, `debug`, `trace` (or use `RUST_LOG` env var) | `warn` |
-| `-v, --verbose` | Enable verbose mode with formatted text output | off |
-| `--from-file <PATH>` | Parse a plist sample from a file instead of running powermetrics (for testing) | - |
 | `-h, --help` | Print help | - |
 | `-V, --version` | Print version | - |
 
@@ -37,18 +32,19 @@ sudo rasitop [OPTIONS]
 
 ```sh
 # Run with default settings (1 second interval, human-readable output)
-sudo rasitop
+rasitop
 
 # Run with 2 second refresh interval
-sudo rasitop -i 2
+rasitop -i 2
 
 # Output as JSON
-sudo rasitop --format json
+rasitop --format json
 
 # Output as CSV
-sudo rasitop --format csv
-
-# Test with a saved plist file
-rasitop --from-file sample.plist -v
+rasitop --format csv
 ```
 
+## Credits
+
+- Portions of the IOReport/SMC/IOHID sampling code are adapted from
+  https://github.com/vladkens/macmon (MIT License) by vladkens.
