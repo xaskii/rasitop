@@ -118,12 +118,30 @@ impl OutputFormatter for CsvFormatter {
             sample.p_busy_ratio.unwrap_or(0.0),
             sample.e_freq_hz.unwrap_or(0.0) / 1e9,
             sample.p_freq_hz.unwrap_or(0.0) / 1e9,
-            sample.cpu_temp_c.map(|t| format!("{:.2}", t)).unwrap_or_default(),
-            sample.gpu_temp_c.map(|t| format!("{:.2}", t)).unwrap_or_default(),
-            sample.ram_total_bytes.map(|v| v.to_string()).unwrap_or_default(),
-            sample.ram_usage_bytes.map(|v| v.to_string()).unwrap_or_default(),
-            sample.swap_total_bytes.map(|v| v.to_string()).unwrap_or_default(),
-            sample.swap_usage_bytes.map(|v| v.to_string()).unwrap_or_default(),
+            sample
+                .cpu_temp_c
+                .map(|t| format!("{:.2}", t))
+                .unwrap_or_default(),
+            sample
+                .gpu_temp_c
+                .map(|t| format!("{:.2}", t))
+                .unwrap_or_default(),
+            sample
+                .ram_total_bytes
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            sample
+                .ram_usage_bytes
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            sample
+                .swap_total_bytes
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            sample
+                .swap_usage_bytes
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
             sample
                 .battery_percent
                 .map(|p| p.to_string())
@@ -248,6 +266,7 @@ mod tests {
             ram_usage_bytes: Some(20_985_479_168),
             swap_total_bytes: Some(4_294_967_296),
             swap_usage_bytes: Some(2_602_434_560),
+            cpu_cores: None,
         }
     }
 
@@ -280,6 +299,7 @@ mod tests {
             ram_usage_bytes: None,
             swap_total_bytes: None,
             swap_usage_bytes: None,
+            cpu_cores: None,
         };
 
         assert_debug_snapshot!(format_outputs(&sample));
@@ -309,6 +329,7 @@ mod tests {
             ram_usage_bytes: Some(0),
             swap_total_bytes: Some(0),
             swap_usage_bytes: Some(0),
+            cpu_cores: None,
         };
 
         assert_debug_snapshot!(format_outputs(&sample));
@@ -338,6 +359,7 @@ mod tests {
             ram_usage_bytes: Some(61_000_000_000),
             swap_total_bytes: Some(8_589_934_592),
             swap_usage_bytes: Some(4_200_000_000),
+            cpu_cores: None,
         };
 
         assert_debug_snapshot!(format_outputs(&sample));
@@ -367,6 +389,7 @@ mod tests {
             ram_usage_bytes: Some(4_200_000_000),
             swap_total_bytes: None,
             swap_usage_bytes: None,
+            cpu_cores: None,
         };
 
         let sample2 = Sample {
@@ -391,6 +414,7 @@ mod tests {
             ram_usage_bytes: Some(4_300_000_000),
             swap_total_bytes: Some(4_294_967_296),
             swap_usage_bytes: Some(1_000_000_000),
+            cpu_cores: None,
         };
 
         let outputs = PartialClusterOutputs {

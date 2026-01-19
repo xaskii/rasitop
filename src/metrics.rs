@@ -2,6 +2,7 @@ use crate::sources::{
     IOHIDSensors, IOReport, SMC, SocInfo, cfio_get_residencies, cfio_watts, libc_ram, libc_swap,
 };
 use serde::Serialize;
+use std::collections::HashMap;
 
 const CPU_FREQ_CORE_SUBG: &str = "CPU Core Performance States";
 
@@ -28,6 +29,13 @@ pub struct Sample {
     pub ram_usage_bytes: Option<u64>,
     pub swap_total_bytes: Option<u64>,
     pub swap_usage_bytes: Option<u64>,
+    pub cpu_cores: Option<Vec<CoreSample>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CoreSample {
+    pub label: String,
+    pub busy_ratio: f64,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -58,7 +66,10 @@ fn zero_div<T: core::ops::Div<Output = T> + Default + PartialEq>(a: T, b: T) -> 
     if b == zero { zero } else { a / b }
 }
 
-fn calc_core_usage(item: core_foundation::dictionary::CFDictionaryRef, freqs: &[u32]) -> Option<CoreUsage> {
+fn calc_core_usage(
+    item: core_foundation::dictionary::CFDictionaryRef,
+    freqs: &[u32],
+) -> Option<CoreUsage> {
     if freqs.is_empty() {
         return None;
     }
@@ -98,6 +109,38 @@ fn calc_core_usage(item: core_foundation::dictionary::CFDictionaryRef, freqs: &[
         busy_ratio: usage_ratio,
         from_max,
     })
+}
+
+fn core_label_from_channel(channel: &str) -> String {
+    let cluster = if channel.contains("ECPU") {
+        "E"
+    } else if channel.contains("PCPU") {
+        "P"
+    } else {
+        "C"
+    };
+
+    let index = channel
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .last()
+        .and_then(|part| part.parse::<u32>().ok());
+
+    match index {
+        Some(idx) => format!("{cluster}{idx}"),
+        None => channel.to_string(),
+    }
+}
+
+fn core_sort_key(label: &str) -> (u8, u32, String) {
+    let mut chars = label.chars();
+    let cluster = match chars.next() {
+        Some('E') => 0,
+        Some('P') => 1,
+        _ => 2,
+    };
+    let index = chars.as_str().parse::<u32>().unwrap_or(0);
+    (cluster, index, label.to_string())
 }
 
 fn aggregate_cluster(cores: &[CoreUsage]) -> Option<ClusterAgg> {
@@ -160,7 +203,9 @@ fn init_smc() -> anyhow::Result<(SMC, Vec<String>, Vec<String>)> {
         }
 
         match name {
-            name if name.starts_with("Tp") || name.starts_with("Te") => cpu_sensors.push(name.clone()),
+            name if name.starts_with("Tp") || name.starts_with("Te") => {
+                cpu_sensors.push(name.clone())
+            }
             name if name.starts_with("Tg") => gpu_sensors.push(name.clone()),
             _ => (),
         }
@@ -237,7 +282,14 @@ impl Sampler {
         let hid = IOHIDSensors::new()?;
         let (smc, smc_cpu_keys, smc_gpu_keys) = init_smc()?;
 
-        Ok(Self { soc, ior, hid, smc, smc_cpu_keys, smc_gpu_keys })
+        Ok(Self {
+            soc,
+            ior,
+            hid,
+            smc,
+            smc_cpu_keys,
+            smc_gpu_keys,
+        })
     }
 
     fn get_temp(&mut self) -> anyhow::Result<(Option<f32>, Option<f32>)> {
@@ -263,6 +315,7 @@ impl Sampler {
     pub fn sample(&mut self, duration_ms: u32) -> anyhow::Result<Sample> {
         let measures: usize = 4;
         let mut results: Vec<MetricsSample> = Vec::with_capacity(measures);
+        let mut core_busy: HashMap<String, (f64, u32)> = HashMap::new();
 
         for (sample, dt) in self.ior.get_samples(duration_ms as u64, measures) {
             let mut ecpu_usages = Vec::new();
@@ -273,6 +326,10 @@ impl Sampler {
                 if x.group == "CPU Stats" && x.subgroup == CPU_FREQ_CORE_SUBG {
                     if x.channel.contains("ECPU") {
                         if let Some(usage) = calc_core_usage(x.item, &self.soc.ecpu_freqs) {
+                            let label = core_label_from_channel(&x.channel);
+                            let entry = core_busy.entry(label).or_insert((0.0, 0));
+                            entry.0 += usage.busy_ratio;
+                            entry.1 += 1;
                             ecpu_usages.push(usage);
                         }
                         continue;
@@ -280,6 +337,10 @@ impl Sampler {
 
                     if x.channel.contains("PCPU") {
                         if let Some(usage) = calc_core_usage(x.item, &self.soc.pcpu_freqs) {
+                            let label = core_label_from_channel(&x.channel);
+                            let entry = core_busy.entry(label).or_insert((0.0, 0));
+                            entry.0 += usage.busy_ratio;
+                            entry.1 += 1;
                             pcpu_usages.push(usage);
                         }
                         continue;
@@ -292,7 +353,9 @@ impl Sampler {
                         c if c.ends_with("CPU Energy") => {
                             rs.cpu_power_w += cfio_watts(x.item, &x.unit, dt)? as f64
                         }
-                        c if c.starts_with("ANE") => rs.ane_power_w += cfio_watts(x.item, &x.unit, dt)? as f64,
+                        c if c.starts_with("ANE") => {
+                            rs.ane_power_w += cfio_watts(x.item, &x.unit, dt)? as f64
+                        }
                         _ => {}
                     }
                 }
@@ -335,6 +398,26 @@ impl Sampler {
             _ => None,
         };
 
+        let cpu_cores = if core_busy.is_empty() {
+            None
+        } else {
+            let mut cores: Vec<CoreSample> = core_busy
+                .into_iter()
+                .filter_map(|(label, (sum, count))| {
+                    if count == 0 {
+                        None
+                    } else {
+                        Some(CoreSample {
+                            label,
+                            busy_ratio: sum / count as f64,
+                        })
+                    }
+                })
+                .collect();
+            cores.sort_by_key(|core| core_sort_key(&core.label));
+            Some(cores)
+        };
+
         let (cpu_temp_c, gpu_temp_c) = self.get_temp().unwrap_or((None, None));
         let (ram_usage, ram_total, swap_usage, swap_total) = self.get_mem().unwrap_or((0, 0, 0, 0));
 
@@ -365,8 +448,17 @@ impl Sampler {
             gpu_temp_c,
             ram_total_bytes: if ram_total > 0 { Some(ram_total) } else { None },
             ram_usage_bytes: if ram_total > 0 { Some(ram_usage) } else { None },
-            swap_total_bytes: if swap_total > 0 { Some(swap_total) } else { None },
-            swap_usage_bytes: if swap_total > 0 { Some(swap_usage) } else { None },
+            swap_total_bytes: if swap_total > 0 {
+                Some(swap_total)
+            } else {
+                None
+            },
+            swap_usage_bytes: if swap_total > 0 {
+                Some(swap_usage)
+            } else {
+                None
+            },
+            cpu_cores,
         })
     }
 }
@@ -378,9 +470,21 @@ mod tests {
     #[test]
     fn aggregate_cluster_tracks_max_values() {
         let items = vec![
-            CoreUsage { freq_mhz: 1200.0, busy_ratio: 0.4, from_max: 0.35 },
-            CoreUsage { freq_mhz: 1800.0, busy_ratio: 0.7, from_max: 0.62 },
-            CoreUsage { freq_mhz: 1600.0, busy_ratio: 0.5, from_max: 0.55 },
+            CoreUsage {
+                freq_mhz: 1200.0,
+                busy_ratio: 0.4,
+                from_max: 0.35,
+            },
+            CoreUsage {
+                freq_mhz: 1800.0,
+                busy_ratio: 0.7,
+                from_max: 0.62,
+            },
+            CoreUsage {
+                freq_mhz: 1600.0,
+                busy_ratio: 0.5,
+                from_max: 0.55,
+            },
         ];
 
         let agg = aggregate_cluster(&items).unwrap_or(ClusterAgg::default());
