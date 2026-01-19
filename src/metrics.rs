@@ -74,7 +74,7 @@ fn calc_core_usage(
         return None;
     }
 
-    let items = cfio_get_residencies(item);
+    let items = unsafe { cfio_get_residencies(item) };
     if items.len() <= freqs.len() {
         return None;
     }
@@ -122,8 +122,7 @@ fn core_label_from_channel(channel: &str) -> String {
 
     let index = channel
         .split(|c: char| !c.is_ascii_digit())
-        .filter(|part| !part.is_empty())
-        .last()
+        .rfind(|part| !part.is_empty())
         .and_then(|part| part.parse::<u32>().ok());
 
     match index {
@@ -349,12 +348,14 @@ impl Sampler {
 
                 if x.group == "Energy Model" {
                     match x.channel.as_str() {
-                        "GPU Energy" => rs.gpu_power_w += cfio_watts(x.item, &x.unit, dt)? as f64,
+                        "GPU Energy" => {
+                            rs.gpu_power_w += unsafe { cfio_watts(x.item, &x.unit, dt)? } as f64
+                        }
                         c if c.ends_with("CPU Energy") => {
-                            rs.cpu_power_w += cfio_watts(x.item, &x.unit, dt)? as f64
+                            rs.cpu_power_w += unsafe { cfio_watts(x.item, &x.unit, dt)? } as f64
                         }
                         c if c.starts_with("ANE") => {
-                            rs.ane_power_w += cfio_watts(x.item, &x.unit, dt)? as f64
+                            rs.ane_power_w += unsafe { cfio_watts(x.item, &x.unit, dt)? } as f64
                         }
                         _ => {}
                     }

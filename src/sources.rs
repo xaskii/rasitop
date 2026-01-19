@@ -57,7 +57,9 @@ pub fn cfstr(val: &str) -> CFStringRef {
     }
 }
 
-pub fn from_cfstr(val: CFStringRef) -> String {
+/// # Safety
+/// `val` must be a valid, live `CFStringRef`.
+pub unsafe fn from_cfstr(val: CFStringRef) -> String {
     unsafe {
         let mut buf = Vec::with_capacity(256);
         if CFStringGetCString(val, buf.as_mut_ptr(), 256, kCFStringEncodingUTF8) == 0 {
@@ -69,7 +71,9 @@ pub fn from_cfstr(val: CFStringRef) -> String {
     }
 }
 
-pub fn cfdict_keys(dict: CFDictionaryRef) -> Vec<String> {
+/// # Safety
+/// `dict` must be a valid, live `CFDictionaryRef`.
+pub unsafe fn cfdict_keys(dict: CFDictionaryRef) -> Vec<String> {
     unsafe {
         let count = CFDictionaryGetCount(dict) as usize;
         let mut keys: Vec<CFStringRef> = Vec::with_capacity(count);
@@ -82,7 +86,9 @@ pub fn cfdict_keys(dict: CFDictionaryRef) -> Vec<String> {
     }
 }
 
-pub fn cfdict_get_val(dict: CFDictionaryRef, key: &str) -> Option<CFTypeRef> {
+/// # Safety
+/// `dict` must be a valid, live `CFDictionaryRef`.
+pub unsafe fn cfdict_get_val(dict: CFDictionaryRef, key: &str) -> Option<CFTypeRef> {
     unsafe {
         let key = cfstr(key);
         let val = CFDictionaryGetValue(dict, key as _);
@@ -140,21 +146,21 @@ unsafe extern "C" {
 fn cfio_get_group(item: CFDictionaryRef) -> String {
     match unsafe { IOReportChannelGetGroup(item) } {
         x if x.is_null() => String::new(),
-        x => from_cfstr(x),
+        x => unsafe { from_cfstr(x) },
     }
 }
 
 fn cfio_get_subgroup(item: CFDictionaryRef) -> String {
     match unsafe { IOReportChannelGetSubGroup(item) } {
         x if x.is_null() => String::new(),
-        x => from_cfstr(x),
+        x => unsafe { from_cfstr(x) },
     }
 }
 
 fn cfio_get_channel(item: CFDictionaryRef) -> String {
     match unsafe { IOReportChannelGetChannelName(item) } {
         x if x.is_null() => String::new(),
-        x => from_cfstr(x),
+        x => unsafe { from_cfstr(x) },
     }
 }
 
@@ -170,20 +176,24 @@ pub fn cfio_get_props(entry: u32, name: String) -> anyhow::Result<CFDictionaryRe
     }
 }
 
-pub fn cfio_get_residencies(item: CFDictionaryRef) -> Vec<(String, i64)> {
+/// # Safety
+/// `item` must be a valid IOReport channel `CFDictionaryRef`.
+pub unsafe fn cfio_get_residencies(item: CFDictionaryRef) -> Vec<(String, i64)> {
     let count = unsafe { IOReportStateGetCount(item) };
     let mut res = vec![];
 
     for i in 0..count {
         let name = unsafe { IOReportStateGetNameForIndex(item, i) };
         let val = unsafe { IOReportStateGetResidency(item, i) };
-        res.push((from_cfstr(name), val));
+        res.push((unsafe { from_cfstr(name) }, val));
     }
 
     res
 }
 
-pub fn cfio_watts(item: CFDictionaryRef, unit: &str, duration: u64) -> anyhow::Result<f32> {
+/// # Safety
+/// `item` must be a valid IOReport channel `CFDictionaryRef`.
+pub unsafe fn cfio_watts(item: CFDictionaryRef, unit: &str, duration: u64) -> anyhow::Result<f32> {
     let val = unsafe { IOReportSimpleGetIntegerValue(item, 0) } as f32;
     let val = val / (duration as f32 / 1000.0);
     match unit {
@@ -254,8 +264,10 @@ pub struct IOReportIterator {
 }
 
 impl IOReportIterator {
-    pub fn new(data: CFDictionaryRef) -> Self {
-        let items = cfdict_get_val(data, "IOReportChannels").unwrap() as CFArrayRef;
+    /// # Safety
+    /// `data` must be a valid IOReport sample dictionary containing IOReport channels.
+    pub unsafe fn new(data: CFDictionaryRef) -> Self {
+        let items = unsafe { cfdict_get_val(data, "IOReportChannels") }.unwrap() as CFArrayRef;
         let items_size = unsafe { CFArrayGetCount(items) } as isize;
         Self {
             sample: data,
@@ -294,7 +306,7 @@ impl Iterator for IOReportIterator {
         let group = cfio_get_group(item);
         let subgroup = cfio_get_subgroup(item);
         let channel = cfio_get_channel(item);
-        let unit = from_cfstr(unsafe { IOReportChannelGetUnitLabel(item) })
+        let unit = unsafe { from_cfstr(IOReportChannelGetUnitLabel(item)) }
             .trim()
             .to_string();
 
@@ -335,18 +347,18 @@ fn cfio_get_chan(items: Vec<(&str, Option<&str>)>) -> anyhow::Result<CFMutableDi
     }
 
     let chan = channels[0];
-    for i in 1..channels.len() {
-        unsafe { IOReportMergeChannels(chan, channels[i], null()) };
+    for channel in channels.iter().skip(1) {
+        unsafe { IOReportMergeChannels(chan, *channel, null()) };
     }
 
     let size = unsafe { CFDictionaryGetCount(chan) };
     let chan = unsafe { CFDictionaryCreateMutableCopy(kCFAllocatorDefault, size, chan) };
 
-    for i in 0..channels.len() {
-        unsafe { CFRelease(channels[i] as _) };
+    for channel in &channels {
+        unsafe { CFRelease(*channel as _) };
     }
 
-    if cfdict_get_val(chan, "IOReportChannels").is_none() {
+    if unsafe { cfdict_get_val(chan, "IOReportChannels") }.is_none() {
         bail!("Failed to get channels");
     }
 
@@ -408,7 +420,7 @@ impl IOReport {
             let elapsed = next.1.duration_since(prev.1).as_millis() as u64;
             prev = next;
 
-            samples.push((IOReportIterator::new(diff), elapsed.max(1)));
+            samples.push((unsafe { IOReportIterator::new(diff) }, elapsed.max(1)));
         }
 
         self.prev = Some(prev);
@@ -525,7 +537,9 @@ impl SocInfo {
     }
 }
 
-pub fn get_dvfs_mhz(dict: CFDictionaryRef, key: &str) -> (Vec<u32>, Vec<u32>) {
+/// # Safety
+/// `dict` must be a valid, live `CFDictionaryRef` containing `key` as a CFData entry.
+pub unsafe fn get_dvfs_mhz(dict: CFDictionaryRef, key: &str) -> (Vec<u32>, Vec<u32>) {
     unsafe {
         let obj = cfdict_get_val(dict, key).unwrap() as CFDataRef;
         let obj_len = CFDataGetLength(obj);
@@ -617,9 +631,12 @@ pub fn get_soc_info() -> anyhow::Result<SocInfo> {
     for (entry, name) in IOServiceIterator::new("AppleARMIODevice")? {
         if name == "pmgr" {
             let item = cfio_get_props(entry, name)?;
-            info.ecpu_freqs = to_mhz(get_dvfs_mhz(item, "voltage-states1-sram").1, cpu_scale);
-            info.pcpu_freqs = to_mhz(get_dvfs_mhz(item, "voltage-states5-sram").1, cpu_scale);
-            info.gpu_freqs = to_mhz(get_dvfs_mhz(item, "voltage-states9").1, gpu_scale);
+            let (_, ecpu_freqs) = unsafe { get_dvfs_mhz(item, "voltage-states1-sram") };
+            let (_, pcpu_freqs) = unsafe { get_dvfs_mhz(item, "voltage-states5-sram") };
+            let (_, gpu_freqs) = unsafe { get_dvfs_mhz(item, "voltage-states9") };
+            info.ecpu_freqs = to_mhz(ecpu_freqs, cpu_scale);
+            info.pcpu_freqs = to_mhz(pcpu_freqs, cpu_scale);
+            info.gpu_freqs = to_mhz(gpu_freqs, gpu_scale);
             unsafe { CFRelease(item as _) }
         }
     }

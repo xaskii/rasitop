@@ -23,6 +23,12 @@ impl HumanFormatter {
     }
 }
 
+impl Default for HumanFormatter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OutputFormatter for HumanFormatter {
     fn format_header(&self) -> Option<String> {
         None
@@ -91,6 +97,12 @@ impl CsvFormatter {
         Self {
             header_printed: std::cell::Cell::new(false),
         }
+    }
+}
+
+impl Default for CsvFormatter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -169,6 +181,12 @@ pub struct JsonFormatter;
 impl JsonFormatter {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for JsonFormatter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
