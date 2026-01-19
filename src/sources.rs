@@ -7,25 +7,27 @@
 use std::{
     collections::HashMap,
     marker::{PhantomData, PhantomPinned},
-    mem::{size_of, MaybeUninit},
+    mem::{MaybeUninit, size_of},
     os::raw::c_void,
     ptr::null,
 };
 
+use crate::error::RasitopError;
+use anyhow::{anyhow, bail};
 use core_foundation::{
     array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef},
     base::{CFAllocatorRef, CFRange, CFRelease, CFTypeRef, kCFAllocatorDefault, kCFAllocatorNull},
     data::{CFDataGetBytes, CFDataGetLength, CFDataRef},
     dictionary::{
         CFDictionaryCreate, CFDictionaryCreateMutableCopy, CFDictionaryGetCount,
-        CFDictionaryGetKeysAndValues, CFDictionaryGetValue, CFDictionaryRef, CFMutableDictionaryRef,
-        kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks,
+        CFDictionaryGetKeysAndValues, CFDictionaryGetValue, CFDictionaryRef,
+        CFMutableDictionaryRef, kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks,
     },
     number::{CFNumberCreate, CFNumberRef, kCFNumberSInt32Type},
-    string::{CFStringCreateWithBytesNoCopy, CFStringGetCString, CFStringRef, kCFStringEncodingUTF8},
+    string::{
+        CFStringCreateWithBytesNoCopy, CFStringGetCString, CFStringRef, kCFStringEncodingUTF8,
+    },
 };
-use anyhow::{anyhow, bail};
-use crate::error::RasitopError;
 use serde::Serialize;
 
 pub type CVoidRef = *const std::ffi::c_void;
@@ -33,7 +35,13 @@ pub type CVoidRef = *const std::ffi::c_void;
 // MARK: CF utils
 
 pub fn cfnum(val: i32) -> CFNumberRef {
-    unsafe { CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &val as *const i32 as _) }
+    unsafe {
+        CFNumberCreate(
+            kCFAllocatorDefault,
+            kCFNumberSInt32Type,
+            &val as *const i32 as _,
+        )
+    }
 }
 
 pub fn cfstr(val: &str) -> CFStringRef {
@@ -153,7 +161,8 @@ fn cfio_get_channel(item: CFDictionaryRef) -> String {
 pub fn cfio_get_props(entry: u32, name: String) -> anyhow::Result<CFDictionaryRef> {
     unsafe {
         let mut props: MaybeUninit<CFMutableDictionaryRef> = MaybeUninit::uninit();
-        if IORegistryEntryCreateCFProperties(entry, props.as_mut_ptr(), kCFAllocatorDefault, 0) != 0 {
+        if IORegistryEntryCreateCFProperties(entry, props.as_mut_ptr(), kCFAllocatorDefault, 0) != 0
+        {
             bail!("Failed to get properties for {}", name);
         }
 
@@ -248,7 +257,12 @@ impl IOReportIterator {
     pub fn new(data: CFDictionaryRef) -> Self {
         let items = cfdict_get_val(data, "IOReportChannels").unwrap() as CFArrayRef;
         let items_size = unsafe { CFArrayGetCount(items) } as isize;
-        Self { sample: data, items, items_size, index: 0 }
+        Self {
+            sample: data,
+            items,
+            items_size,
+            index: 0,
+        }
     }
 }
 
@@ -285,7 +299,13 @@ impl Iterator for IOReportIterator {
             .to_string();
 
         self.index += 1;
-        Some(IOReportIteratorItem { group, subgroup, channel, unit, item })
+        Some(IOReportIteratorItem {
+            group,
+            subgroup,
+            channel,
+            unit,
+            item,
+        })
     }
 }
 
@@ -354,11 +374,18 @@ impl IOReport {
     pub fn new(channels: Vec<(&str, Option<&str>)>) -> anyhow::Result<Self> {
         let chan = cfio_get_chan(channels)?;
         let subs = cfio_get_subs(chan)?;
-        Ok(Self { subs, chan, prev: None })
+        Ok(Self {
+            subs,
+            chan,
+            prev: None,
+        })
     }
 
     fn raw_sample(&self) -> (CFDictionaryRef, std::time::Instant) {
-        (unsafe { IOReportCreateSamples(self.subs, self.chan, null()) }, std::time::Instant::now())
+        (
+            unsafe { IOReportCreateSamples(self.subs, self.chan, null()) },
+            std::time::Instant::now(),
+        )
     }
 
     pub fn get_samples(&mut self, duration: u64, count: usize) -> Vec<(IOReportIterator, u64)> {
@@ -518,7 +545,12 @@ pub fn get_dvfs_mhz(dict: CFDictionaryRef, key: &str) -> (Vec<u32>, Vec<u32>) {
 
 pub fn run_system_profiler() -> anyhow::Result<serde_json::Value> {
     let out = std::process::Command::new("system_profiler")
-        .args(["SPHardwareDataType", "SPDisplaysDataType", "SPSoftwareDataType", "-json"])
+        .args([
+            "SPHardwareDataType",
+            "SPDisplaysDataType",
+            "SPSoftwareDataType",
+            "-json",
+        ])
         .output()?;
 
     let out = std::str::from_utf8(&out.stdout)?;
@@ -534,8 +566,10 @@ pub fn get_soc_info() -> anyhow::Result<SocInfo> {
     let out = run_system_profiler()?;
     let mut info = SocInfo::default();
 
-    let chip_name =
-        out["SPHardwareDataType"][0]["chip_type"].as_str().unwrap_or("Unknown chip").to_string();
+    let chip_name = out["SPHardwareDataType"][0]["chip_type"]
+        .as_str()
+        .unwrap_or("Unknown chip")
+        .to_string();
 
     let mac_model = out["SPHardwareDataType"][0]["machine_model"]
         .as_str()
@@ -556,12 +590,20 @@ pub fn get_soc_info() -> anyhow::Result<SocInfo> {
         .split(':')
         .map(|x| x.parse::<u64>().unwrap_or(0))
         .collect::<Vec<_>>();
-    let (ecpu_cores, pcpu_cores) = if cpu_cores.len() == 3 { (cpu_cores[2], cpu_cores[1]) } else { (0, 0) };
+    let (ecpu_cores, pcpu_cores) = if cpu_cores.len() == 3 {
+        (cpu_cores[2], cpu_cores[1])
+    } else {
+        (0, 0)
+    };
 
-    let gpu_cores =
-        out["SPDisplaysDataType"][0]["sppci_cores"].as_str().unwrap_or("0").parse::<u64>().unwrap_or(0);
+    let gpu_cores = out["SPDisplaysDataType"][0]["sppci_cores"]
+        .as_str()
+        .unwrap_or("0")
+        .parse::<u64>()
+        .unwrap_or(0);
 
-    let before_m4 = chip_name.contains("M1") || chip_name.contains("M2") || chip_name.contains("M3");
+    let before_m4 =
+        chip_name.contains("M1") || chip_name.contains("M2") || chip_name.contains("M3");
     let cpu_scale: u32 = if before_m4 { 1000 * 1000 } else { 1000 };
     let gpu_scale: u32 = 1000 * 1000;
 
@@ -629,7 +671,10 @@ pub struct IOHIDSensors {
 impl IOHIDSensors {
     pub fn new() -> anyhow::Result<Self> {
         let keys = [cfstr("PrimaryUsagePage"), cfstr("PrimaryUsage")];
-        let nums = [cfnum(kHIDPage_AppleVendor), cfnum(kHIDUsage_AppleVendor_TemperatureSensor)];
+        let nums = [
+            cfnum(kHIDPage_AppleVendor),
+            cfnum(kHIDUsage_AppleVendor_TemperatureSensor),
+        ];
 
         let dict = unsafe {
             CFDictionaryCreate(
@@ -671,7 +716,8 @@ impl IOHIDSensors {
                     x => from_cfstr(x),
                 };
 
-                let event = match IOHIDServiceClientCopyEvent(sc, kIOHIDEventTypeTemperature, 0, 0) {
+                let event = match IOHIDServiceClientCopyEvent(sc, kIOHIDEventTypeTemperature, 0, 0)
+                {
                     x if x.is_null() => continue,
                     x => x,
                 };
@@ -781,7 +827,10 @@ impl SMC {
             }
         }
 
-        Ok(Self { conn, keys: HashMap::new() })
+        Ok(Self {
+            conn,
+            keys: HashMap::new(),
+        })
     }
 
     fn read(&self, input: &KeyData) -> anyhow::Result<KeyData> {
@@ -790,7 +839,16 @@ impl SMC {
         let mut oval = KeyData::default();
         let mut olen = size_of::<KeyData>();
 
-        let rs = unsafe { IOConnectCallStructMethod(self.conn, 2, ival, ilen, &mut oval as *mut _ as _, &mut olen) };
+        let rs = unsafe {
+            IOConnectCallStructMethod(
+                self.conn,
+                2,
+                ival,
+                ilen,
+                &mut oval as *mut _ as _,
+                &mut olen,
+            )
+        };
 
         if rs != 0 {
             bail!("IOConnectCallStructMethod: {}", rs);
@@ -808,9 +866,15 @@ impl SMC {
     }
 
     pub fn key_by_index(&self, index: u32) -> anyhow::Result<String> {
-        let ival = KeyData { data8: 8, data32: index, ..Default::default() };
+        let ival = KeyData {
+            data8: 8,
+            data32: index,
+            ..Default::default()
+        };
         let oval = self.read(&ival)?;
-        Ok(std::str::from_utf8(&oval.key.to_be_bytes()).unwrap().to_string())
+        Ok(std::str::from_utf8(&oval.key.to_be_bytes())
+            .unwrap()
+            .to_string())
     }
 
     pub fn read_key_info(&mut self, key: &str) -> anyhow::Result<KeyInfo> {
@@ -823,7 +887,11 @@ impl SMC {
             return Ok(*ki);
         }
 
-        let ival = KeyData { data8: 9, key, ..Default::default() };
+        let ival = KeyData {
+            data8: 9,
+            key,
+            ..Default::default()
+        };
         let oval = self.read(&ival)?;
         self.keys.insert(key, oval.key_info);
         Ok(oval.key_info)
@@ -834,12 +902,19 @@ impl SMC {
 
         let key_info = self.read_key_info(key)?;
         let key = key.bytes().fold(0, |acc, x| (acc << 8) + x as u32);
-        let ival = KeyData { data8: 5, key, key_info, ..Default::default() };
+        let ival = KeyData {
+            data8: 5,
+            key,
+            key_info,
+            ..Default::default()
+        };
         let oval = self.read(&ival)?;
 
         Ok(SensorVal {
             name,
-            unit: std::str::from_utf8(&key_info.data_type.to_be_bytes()).unwrap().to_string(),
+            unit: std::str::from_utf8(&key_info.data_type.to_be_bytes())
+                .unwrap()
+                .to_string(),
             data: oval.bytes[0..key_info.data_size as usize].to_vec(),
         })
     }

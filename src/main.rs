@@ -6,10 +6,9 @@ use std::sync::{
 
 use clap::Parser;
 
-mod output;
-mod metrics;
-mod error;
-mod sources;
+use rasitop::error;
+use rasitop::metrics;
+use rasitop::output;
 
 #[derive(Parser, Debug)]
 #[command(version)]
