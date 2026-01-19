@@ -1,7 +1,7 @@
 # Rasitop
 
 Sudoless performance monitoring for Apple Silicon. This is still evolving, with a
-longer term goal of becoming a menubar app.
+menu bar app target alongside the CLI.
 
 ## Development Setup
 
@@ -43,6 +43,16 @@ rasitop --format json
 # Output as CSV
 rasitop --format csv
 ```
+
+### Menu bar app
+
+Build and run the menu bar UI:
+
+```sh
+cargo run --bin rasitop-menubar
+```
+
+Click the status item to open the popover UI. Use the Quit button to exit.
 
 ## Credits
 

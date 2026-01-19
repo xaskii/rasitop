@@ -1,0 +1,16 @@
+---
+source: src/bin/rasitop-menubar.rs
+expression: ui
+---
+UiStrings {
+    status_line: "Updated 0.4s ago",
+    total_power: "4.1W",
+    power_line: "CPU 1.9W  GPU 0.7W  ANE 0.1W  Total 2.7W",
+    busy_line: "E 39%  P 69%",
+    freq_line: "E 0.97GHz  P 3.09GHz",
+    temp_line: "CPU 48.2C  GPU 42.8C",
+    mem_line: "RAM 19.5/24.0GB  Swap 2.4/4.0GB",
+    core_summary: "E2 P2",
+    error_line: None,
+    status_title: "4.1W",
+}
