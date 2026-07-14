@@ -1,0 +1,79 @@
+#ifndef CPU_MONITOR_FFI_H
+#define CPU_MONITOR_FFI_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define rasitop_max_logical_cpus 64
+
+#define rasitop_ok 0
+#define rasitop_sample_ready 1
+#define rasitop_error_invalid_argument -1
+#define rasitop_error_engine -2
+#define rasitop_error_panic -3
+
+typedef struct rasitop_engine rasitop_engine;
+
+typedef struct {
+  double total_ratio;
+  double user_ratio;
+  double system_ratio;
+  double nice_ratio;
+  double idle_ratio;
+} rasitop_cpu_sample;
+
+typedef struct {
+  uint32_t logical_cpu;
+  rasitop_cpu_sample usage;
+} rasitop_per_core_sample;
+
+typedef struct {
+  uint64_t sequence;
+  uint64_t monotonic_ns;
+  uint64_t interval_ns;
+  uint64_t sample_duration_ns;
+  rasitop_cpu_sample aggregate;
+  uint32_t per_core_count;
+  rasitop_per_core_sample per_core[rasitop_max_logical_cpus];
+} rasitop_engine_snapshot;
+
+int32_t rasitop_engine_create(rasitop_engine **out_engine);
+int32_t rasitop_engine_sample(rasitop_engine *engine,
+                              rasitop_engine_snapshot *out_snapshot);
+int32_t rasitop_engine_destroy(rasitop_engine *engine);
+
+static inline const rasitop_per_core_sample *
+rasitop_snapshot_core(const rasitop_engine_snapshot *snapshot, uint32_t index) {
+  if (snapshot == 0 || index >= snapshot->per_core_count ||
+      index >= rasitop_max_logical_cpus) {
+    return 0;
+  }
+  return &snapshot->per_core[index];
+}
+
+_Static_assert(sizeof(rasitop_cpu_sample) == 40,
+               "rasitop_cpu_sample ABI layout changed");
+_Static_assert(offsetof(rasitop_cpu_sample, user_ratio) == 8,
+               "rasitop_cpu_sample ABI field order changed");
+_Static_assert(sizeof(rasitop_per_core_sample) == 48,
+               "rasitop_per_core_sample ABI layout changed");
+_Static_assert(offsetof(rasitop_per_core_sample, usage) == 8,
+               "rasitop_per_core_sample ABI field order changed");
+_Static_assert(sizeof(rasitop_engine_snapshot) == 3152,
+               "rasitop_engine_snapshot ABI layout changed");
+_Static_assert(offsetof(rasitop_engine_snapshot, aggregate) == 32,
+               "rasitop_engine_snapshot aggregate offset changed");
+_Static_assert(offsetof(rasitop_engine_snapshot, per_core_count) == 72,
+               "rasitop_engine_snapshot core count offset changed");
+_Static_assert(offsetof(rasitop_engine_snapshot, per_core) == 80,
+               "rasitop_engine_snapshot core array offset changed");
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

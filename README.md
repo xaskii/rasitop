@@ -1,60 +1,60 @@
-# Rasitop
+# rasitop
 
-Sudoless performance monitoring for Apple Silicon. This is still evolving, with a
-menu bar app target alongside the CLI.
+rasitop is a low-overhead macOS menu bar CPU monitor written in Rust and Swift.
+It reads Mach CPU counters directly and displays current total utilization for
+each logical core in a compact graph. User, system, and nice time remain
+separate in the sampling engine and CSV recorder.
 
-## Development Setup
+## Build
 
-```sh
-# Get a rust toolchain somehow
-cargo build --bin rasitop (only guaranteed to build on stable)
-```
-
-## Usage
-
-Rasitop uses private macOS APIs (IOReport, SMC, and IOHID) to sample power and
-utilization without sudo. These APIs can change across macOS releases.
+Requires macOS, a Rust toolchain, and the Xcode command-line tools.
 
 ```sh
-rasitop [OPTIONS]
+cargo build
+# target/debug/rasitop.app
+
+cargo build --release
+# target/release/rasitop.app
 ```
 
-### Options
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-i, --interval <SECONDS>` | Refresh interval in seconds | `1` |
-| `--format <FORMAT>` | Output format: `json`, `csv`, or `human` | `human` |
-| `-h, --help` | Print help | - |
-| `-V, --version` | Print version | - |
-
-### Examples
+Cargo builds the Rust engine, Swift/AppKit shell, signed local app bundle, and
+the `rasitop` command-line recorder. The `justfile` provides optional shortcuts:
 
 ```sh
-# Run with default settings (1 second interval, human-readable output)
-rasitop
-
-# Run with 2 second refresh interval
-rasitop -i 2
-
-# Output as JSON
-rasitop --format json
-
-# Output as CSV
-rasitop --format csv
+just app       # release build
+just app-run   # release build and launch
 ```
 
-### Menu bar app
-
-Build and run the menu bar UI:
+Launch the release app directly with:
 
 ```sh
-cargo run --bin rasitop-menubar
+open -n target/release/rasitop.app
 ```
 
-Click the status item to open the popover UI. Use the Quit button to exit.
+## CSV recorder
 
-## Credits
+```sh
+cargo run --release -- record --duration 1m > samples.csv
 
-- Portions of the IOReport/SMC/IOHID sampling code are adapted from
-  https://github.com/vladkens/macmon (MIT License) by vladkens.
+cargo run --release -- record --duration 1m \
+  --per-core-csv cores.csv > samples.csv
+```
+
+Run `cargo run --release -- record --help` for all recording options.
+
+## Tests
+
+```sh
+cargo fmt --all --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo nextest run
+cargo +nightly miri test --lib ffi::tests
+xcrun swift-format lint --recursive app-macos/Sources/rasitop_app
+```
+
+Use `cargo test` if `cargo-nextest` is unavailable.
+
+## Inspiration
+
+Inspired by [macmon](https://github.com/vladkens/macmon) and
+[Stats](https://github.com/exelban/stats) by exelban.

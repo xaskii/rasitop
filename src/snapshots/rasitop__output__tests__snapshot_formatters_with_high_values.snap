@@ -1,9 +1,0 @@
----
-source: src/output.rs
-expression: format_outputs(&sample)
----
-FormatterOutputs {
-    human: "[2025-12-31T23:59:59Z] CPU: 50.00W  GPU: 150.00W  ANE: 10.00W  Combined: 200.00W | Total: 250.00W | E-busy: 100.0%  P-busy: 100.0%  E-freq: 4.00GHz  P-freq: 5.00GHz | Temp: CPU 95.0C GPU 88.5C | RAM 56.81/64.00GB Swap 3.91/8.00GB | Battery: 100%",
-    csv: "timestamp,cpu_power_w,gpu_power_w,ane_power_w,combined_power_w,sys_power_w,cpu_energy,gpu_energy,ane_energy,e_busy_ratio,p_busy_ratio,e_freq_ghz,p_freq_ghz,cpu_temp_c,gpu_temp_c,ram_total_bytes,ram_usage_bytes,swap_total_bytes,swap_usage_bytes,battery_percent\n2025-12-31T23:59:59Z,50.00,150.00,10.00,200.00,250.00,25000,75000,5000,1.0000,1.0000,4.00,5.00,95.00,88.50,68719476736,61000000000,8589934592,4200000000,100",
-    json: "{\"ane_energy\":5000,\"ane_power_w\":10.0,\"battery_percent\":100,\"combined_power_w\":200.0,\"cpu_energy\":25000,\"cpu_power_w\":50.0,\"cpu_temp_c\":95.0,\"e_busy_ratio\":1.0,\"e_freq_ghz\":4.0,\"gpu_energy\":75000,\"gpu_power_w\":150.0,\"gpu_temp_c\":88.5,\"p_busy_ratio\":1.0,\"p_freq_ghz\":5.0,\"ram_total_bytes\":68719476736,\"ram_usage_bytes\":61000000000,\"swap_total_bytes\":8589934592,\"swap_usage_bytes\":4200000000,\"sys_power_w\":250.0,\"timestamp\":\"2025-12-31T23:59:59Z\"}",
-}

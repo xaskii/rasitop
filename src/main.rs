@@ -1,76 +1,85 @@
+use std::fs::File;
+use std::io::{self, BufWriter, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::time::Duration;
 
-use clap::Parser;
+use anyhow::{Context, Result};
+use clap::{Args, Parser, Subcommand};
 
-use rasitop::error;
-use rasitop::metrics;
-use rasitop::output;
+use rasitop::record::{self, RecordOptions};
 
-#[derive(Parser, Debug)]
-#[command(version)]
-struct Opts {
-    /// Refresh interval (seconds)
-    #[arg(short, long, default_value_t = 1)]
-    interval: u16,
-    /// Output format: json, csv, or human
-    #[arg(long, default_value = "human")]
-    format: OutputFormat,
+#[derive(Debug, Parser)]
+#[command(version, about = "Low-overhead Apple Silicon performance recorder")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
 }
 
-#[derive(Debug, Clone, clap::ValueEnum)]
-enum OutputFormat {
-    Json,
-    Csv,
-    Human,
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Record aggregate CPU utilization as CSV.
+    Record(RecordArgs),
+}
+
+#[derive(Debug, Args)]
+struct RecordArgs {
+    /// Sampling interval, such as 250ms, 1s, or 2s.
+    #[arg(long, default_value = "1s", value_parser = humantime::parse_duration)]
+    interval: Duration,
+
+    /// Stop after this duration, such as 30s or 10m.
+    #[arg(long, value_parser = humantime::parse_duration, conflicts_with = "count")]
+    duration: Option<Duration>,
+
+    /// Stop after writing this many samples.
+    #[arg(long, conflicts_with = "duration")]
+    count: Option<u64>,
+
+    /// Also write long-form per-logical-CPU samples to this CSV file.
+    #[arg(long, value_name = "PATH")]
+    per_core_csv: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
-    let result = run();
-    match result {
-        Ok(code) => code,
-        Err(err) => {
-            eprintln!("[rasitop error]: {:#}", err);
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("rasitop: {error:#}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn run() -> anyhow::Result<ExitCode> {
-    let args = Opts::parse();
+fn run() -> Result<()> {
+    let cli = Cli::parse();
+    anyhow::ensure!(
+        cfg!(target_os = "macos"),
+        "rasitop CPU recording requires macOS"
+    );
 
-    if std::env::consts::OS != "macos" {
-        return Err(error::RasitopError::UnsupportedOs(std::env::consts::OS.to_string()).into());
-    }
-
-    let mut sampler = metrics::Sampler::new()?;
-
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let shutdown_clone = shutdown.clone();
-    ctrlc::set_handler(move || {
-        shutdown_clone.store(true, Ordering::SeqCst);
-    })?;
-
-    let formatter = create_formatter(&args.format);
-    formatter.print_header();
-
-    let interval_ms = (args.interval as u64 * 1000).clamp(100, 60_000) as u32;
-
-    while !shutdown.load(Ordering::SeqCst) {
-        let sample = sampler.sample(interval_ms)?;
-        formatter.print_sample(&sample);
-    }
-
-    Ok(ExitCode::SUCCESS)
-}
-
-fn create_formatter(format: &OutputFormat) -> Box<dyn output::OutputFormatter> {
-    match format {
-        OutputFormat::Human => Box::new(output::HumanFormatter::new()),
-        OutputFormat::Csv => Box::new(output::CsvFormatter::new()),
-        OutputFormat::Json => Box::new(output::JsonFormatter::new()),
+    match cli.command {
+        Command::Record(args) => {
+            let stdout = io::stdout();
+            let writer = BufWriter::new(stdout.lock());
+            let per_core_writer = args
+                .per_core_csv
+                .map(|path| -> Result<Box<dyn Write>> {
+                    let file = File::create(&path)
+                        .with_context(|| format!("create per-core CSV at {}", path.display()))?;
+                    Ok(Box::new(BufWriter::new(file)))
+                })
+                .transpose()?;
+            record::record(
+                writer,
+                per_core_writer,
+                RecordOptions {
+                    interval: args.interval,
+                    duration: args.duration,
+                    count: args.count,
+                },
+            )
+            .context("record CPU samples")
+        }
     }
 }

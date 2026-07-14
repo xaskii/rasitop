@@ -1,9 +1,7 @@
 # AGENTS.md
 
-## Repo Notes
-
-- Version control uses Jujutsu (`jj`) alongside git; prefer `jj status`, `jj diff`, and `jj commit`.
-- rasitop aggregates per-core E/P metrics by taking the **max** busy ratio and max frequency across cores.
+Version control uses Jujutsu (`jj`) alongside git; prefer `jj status`, `jj diff`,
+and `jj commit`.
 
 ## Jujutsu Workflow
 
@@ -18,9 +16,11 @@
 - Build with `cargo build` (use `cargo build --release` for release).
 - Run tests with `cargo nextest run` (fallback: `cargo test`).
 - Format and lint with `cargo fmt` and `cargo clippy`.
-- Validate parsing with `cargo run -- --from-file path/to/sample.plist`.
+- Validate the unsafe FFI boundary with
+  `cargo +nightly miri test --lib ffi::tests`.
 
 ## Runtime Checks
 
-- Try `cargo run -- --format human` to sanity-check live sampling output.
+- Try `cargo run --release -- record --duration 1m` to sanity-check live CPU
+  sampling output.
 - Stop with Ctrl-C to verify clean shutdown.

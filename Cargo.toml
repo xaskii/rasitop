@@ -2,21 +2,19 @@
 name = "rasitop"
 version = "0.1.0"
 edition = "2024"
+default-run = "rasitop"
+
+[[bin]]
+name = "rasitop-app"
+path = "src/bin/rasitop-app.rs"
+test = false
+bench = false
 
 [dependencies]
 anyhow = "1.0.98"
 chrono = "0.4.41"
 clap = { version = "4.5.37", features = ["derive"] }
-core-foundation = "0.10.1"
 ctrlc = "3.5"
-libc = "0.2.172"
-objc = "0.2.7"
+csv = "1.3"
+humantime = "2.1"
 serde = { version = "1.0.210", features = ["derive"] }
-serde_json = "1.0.145"
-thiserror = "2.0.12"
-
-[features]
-cargo-clippy = []
-
-[dev-dependencies]
-insta = "1.41.1"
