@@ -2,20 +2,14 @@ import AppKit
 
 @MainActor
 final class CPUStatusGraphView: NSView {
-  private struct CoreUsage {
-    var user = 0.0
-    var system = 0.0
-    var nice = 0.0
-  }
-
   static let graphSize = NSSize(width: 76, height: 18)
 
   private let coreGap = 0.5
-  private let borderColor = NSColor.white.cgColor
-  private let busyColor = NSColor.systemBlue.cgColor
+  private let barsLayer = CAShapeLayer()
+  private let borderLayer = CAShapeLayer()
   private var coreCount = 0
-  private var cores = Array(
-    repeating: CoreUsage(),
+  private var busyRatios = Array(
+    repeating: 0.0,
     count: Int(rasitop_max_logical_cpus)
   )
 
@@ -24,6 +18,17 @@ final class CPUStatusGraphView: NSView {
     setAccessibilityElement(true)
     setAccessibilityRole(.image)
     setAccessibilityLabel("CPU utilization per logical core")
+
+    wantsLayer = true
+    let rootLayer = CALayer()
+    layer = rootLayer
+
+    barsLayer.fillColor = NSColor.systemBlue.cgColor
+    borderLayer.fillColor = nil
+    borderLayer.strokeColor = NSColor.white.cgColor
+    rootLayer.addSublayer(barsLayer)
+    rootLayer.addSublayer(borderLayer)
+    updateLayerGeometry()
   }
 
   @available(*, unavailable)
@@ -33,6 +38,16 @@ final class CPUStatusGraphView: NSView {
 
   override func hitTest(_ point: NSPoint) -> NSView? {
     nil
+  }
+
+  override func layout() {
+    super.layout()
+    updateLayerGeometry()
+  }
+
+  override func viewDidChangeBackingProperties() {
+    super.viewDidChangeBackingProperties()
+    updateLayerGeometry()
   }
 
   func update(from snapshot: inout rasitop_engine_snapshot) {
@@ -51,69 +66,69 @@ final class CPUStatusGraphView: NSView {
         else {
           continue
         }
-        cores[index] = CoreUsage(
-          user: sample.user_ratio,
-          system: sample.system_ratio,
-          nice: sample.nice_ratio
-        )
+        busyRatios[index] =
+          sample.user_ratio
+          + sample.system_ratio
+          + sample.nice_ratio
       }
     }
 
     coreCount = count
-    needsDisplay = true
+    updateBarsPath()
   }
 
-  override func draw(_ dirtyRect: NSRect) {
-    guard let context = NSGraphicsContext.current?.cgContext else {
-      return
-    }
-
+  private var backingScale: CGFloat {
     let scale =
       window?.backingScaleFactor
       ?? NSScreen.main?.backingScaleFactor
       ?? 1
-    let borderWidth = 1 / scale
-    let borderOffset = borderWidth / 2
-    let content = bounds.insetBy(dx: borderOffset, dy: borderOffset)
-
-    if coreCount > 0 {
-      let barWidth = max(
-        borderWidth,
-        (content.width / CGFloat(coreCount)) - coreGap
-      )
-
-      drawBars(
-        context: context,
-        content: content,
-        barWidth: barWidth
-      )
-    }
-
-    context.addPath(
-      Self.makeBorderPath(bounds: bounds, offset: borderOffset)
-    )
-    context.setStrokeColor(borderColor)
-    context.setLineWidth(borderWidth)
-    context.strokePath()
+    return max(scale, 1)
   }
 
-  private func drawBars(
-    context: CGContext,
-    content: CGRect,
-    barWidth: CGFloat
-  ) {
-    context.setFillColor(busyColor)
+  private func updateLayerGeometry() {
+    let scale = backingScale
+    let borderWidth = 1 / scale
+    let borderOffset = borderWidth / 2
+
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    layer?.contentsScale = scale
+    barsLayer.contentsScale = scale
+    barsLayer.frame = bounds
+    borderLayer.contentsScale = scale
+    borderLayer.frame = bounds
+    borderLayer.lineWidth = borderWidth
+    borderLayer.path = Self.makeBorderPath(
+      bounds: bounds,
+      offset: borderOffset
+    )
+    updateBarsPath(scale: scale)
+    CATransaction.commit()
+  }
+
+  private func updateBarsPath(scale: CGFloat? = nil) {
+    guard coreCount > 0 else {
+      barsLayer.path = nil
+      return
+    }
+
+    let borderWidth = 1 / (scale ?? backingScale)
+    let borderOffset = borderWidth / 2
+    let content = bounds.insetBy(dx: borderOffset, dy: borderOffset)
+    let barWidth = max(
+      borderWidth,
+      (content.width / CGFloat(coreCount)) - coreGap
+    )
+    let path = CGMutablePath()
 
     for index in 0..<coreCount {
-      let usage = cores[index]
-      let totalBusy = usage.user + usage.system + usage.nice
-      let height = clamped(totalBusy) * content.height
+      let height = clamped(busyRatios[index]) * content.height
       guard height > 0 else {
         continue
       }
 
       let x = content.minX + CGFloat(index) * (barWidth + coreGap)
-      context.fill(
+      path.addRect(
         CGRect(
           x: x,
           y: content.minY,
@@ -122,6 +137,11 @@ final class CPUStatusGraphView: NSView {
         )
       )
     }
+
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    barsLayer.path = path
+    CATransaction.commit()
   }
 
   private func clamped(_ ratio: Double) -> CGFloat {
