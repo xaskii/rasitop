@@ -37,6 +37,33 @@ cargo run --release -- record --duration 1m \
 
 Run `cargo run --release -- record --help` for all recording options.
 
+## Recording validation
+
+Python development tools are locked by `uv` and typechecked with Pyrefly:
+
+```sh
+uv sync --locked
+uv run pyrefly check
+uv run python -m unittest discover -s scripts/tests -t scripts -v
+```
+
+Validate or plot an existing versioned CSV recording:
+
+```sh
+uv run scripts/validate_recording.py samples.csv --require-clean
+uv run scripts/plot_recording.py samples.csv --output samples.png
+```
+
+Produce short idle, single-thread, and all-core captures with plots, per-core
+CSVs, hardware metadata, and a machine-readable summary:
+
+```sh
+uv run scripts/run_phase0_validation.py benchmarks/phase0/local
+```
+
+Checked-in baseline runs live under `benchmarks/phase0/`. They are evidence for
+the machine and OS named in each run, not portable performance claims.
+
 ## Tests
 
 ```sh
