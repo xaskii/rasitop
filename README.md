@@ -18,12 +18,7 @@ cargo build --release
 ```
 
 Cargo builds the Rust engine, Swift/AppKit shell, signed local app bundle, and
-the `rasitop` command-line recorder. The `justfile` provides optional shortcuts:
-
-```sh
-just app       # release build
-just app-run   # release build and launch
-```
+the `rasitop` command-line recorder.
 
 Launch the release app directly with:
 
