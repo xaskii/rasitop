@@ -19,7 +19,8 @@ fn main() {
 fn build_swift_app() -> Result<(), String> {
     let root = PathBuf::from(required_env("CARGO_MANIFEST_DIR")?);
     let out_dir = PathBuf::from(required_env("OUT_DIR")?);
-    let profile = required_env("PROFILE")?;
+    let opt_level = required_env("OPT_LEVEL")?;
+    let debug_info = required_env("DEBUG")? == "true";
     let architecture = match required_env("CARGO_CFG_TARGET_ARCH")?.as_str() {
         "aarch64" => "arm64",
         "x86_64" => "x86_64",
@@ -32,6 +33,7 @@ fn build_swift_app() -> Result<(), String> {
     let swiftc = command_stdout("xcrun", ["--find", "swiftc"])?;
 
     let module_cache = out_dir.join("module-cache");
+    let swift_module = out_dir.join("rasitop_app.swiftmodule");
     let swift_library = out_dir.join("librasitop_swift.a");
     fs::create_dir_all(&module_cache).map_err(display_error)?;
 
@@ -45,6 +47,8 @@ fn build_swift_app() -> Result<(), String> {
         .arg("-parse-as-library")
         .arg("-module-name")
         .arg("rasitop_app")
+        .arg("-emit-module-path")
+        .arg(swift_module)
         .arg("-sdk")
         .arg(sdk_path)
         .arg("-target")
@@ -54,10 +58,13 @@ fn build_swift_app() -> Result<(), String> {
         .arg("-import-objc-header")
         .arg(root.join("app-macos/include/rasitop.h"));
 
-    if profile == "release" {
-        command.arg("-Osize").arg("-whole-module-optimization");
+    if opt_level == "0" {
+        command.arg("-Onone");
     } else {
-        command.arg("-Onone").arg("-g");
+        command.arg("-Osize").arg("-whole-module-optimization");
+    }
+    if debug_info {
+        command.arg("-g");
     }
 
     command.args(&sources).arg("-o").arg(&swift_library);
