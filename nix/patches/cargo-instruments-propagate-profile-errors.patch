@@ -1,0 +1,20 @@
+diff --git a/src/app.rs b/src/app.rs
+index edc5223..8fe74b1 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -90,13 +90,6 @@ pub(crate) fn run(app_config: AppConfig) -> Result<()> {
+ 
+     log::debug!("running against target {}", target_filepath.display());
+     // 4. Profile the built target, will display menu if no template was selected
+-    let trace_filepath =
+-        match instruments::profile_target(&target_filepath, &xctrace_tool, &app_config, &workspace)
+-        {
+-            Ok(path) => path,
+-            Err(e) => {
+-                workspace.gctx().shell().error(&e)?;
+-                return Ok(());
+-            }
+-        };
++    let trace_filepath =
++        instruments::profile_target(&target_filepath, &xctrace_tool, &app_config, &workspace)?;
+ 

@@ -20,6 +20,7 @@ rustPlatform.buildRustPackage rec {
   patches = [
     ./patches/cargo-instruments-rust-v0-test.patch
     ./patches/cargo-instruments-non-tty.patch
+    ./patches/cargo-instruments-propagate-profile-errors.patch
   ];
 
   cargoHash = "sha256-AYdvMJJGoO69QB2G8JHPNYhNDFzNdVFna/89UP70jRU=";

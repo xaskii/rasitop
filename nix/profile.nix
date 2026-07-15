@@ -1,5 +1,6 @@
 {
   cargoInstruments,
+  libxml2,
   rustToolchain,
   writeShellApplication,
 }:
@@ -8,6 +9,7 @@ writeShellApplication {
   name = "rasitop-profile";
   runtimeInputs = [
     cargoInstruments
+    libxml2
     rustToolchain
   ];
   text = ''
@@ -29,6 +31,78 @@ writeShellApplication {
       echo "the Rust toolchain must include rust-src" >&2
       exit 1
     fi
+
+    validate_trace() {
+      local trace="$1"
+      local validation_dir
+      local toc
+      local data
+      local target_exit_status
+      local table_count
+      local row_count
+
+      validation_dir="$(mktemp -d "''${TMPDIR:-/tmp}/rasitop-profile.XXXXXX")"
+      toc="$validation_dir/toc.xml"
+      data="$validation_dir/data.xml"
+
+      if ! xcrun xctrace export --quiet --input "$trace" --toc --output "$toc"; then
+        echo "trace validation failed: xctrace could not export the TOC for '$trace'" >&2
+        rm -rf "$validation_dir"
+        return 1
+      fi
+
+      if ! target_exit_status="$(
+        xmllint \
+          --xpath 'string((/trace-toc/run)[last()]/info/target/process[@type="launched"]/@return-exit-status)' \
+          "$toc"
+      )"; then
+        echo "trace validation failed: malformed TOC in '$trace'" >&2
+        rm -rf "$validation_dir"
+        return 1
+      fi
+      if [[ "$target_exit_status" != 0 ]]; then
+        echo "trace validation failed: target exited with status ''${target_exit_status:-unknown}" >&2
+        rm -rf "$validation_dir"
+        return 1
+      fi
+
+      if ! table_count="$(
+        xmllint \
+          --xpath 'count((/trace-toc/run)[last()]/data/table[@schema="tick"])' \
+          "$toc"
+      )"; then
+        echo "trace validation failed: malformed data catalog in '$trace'" >&2
+        rm -rf "$validation_dir"
+        return 1
+      fi
+      if [[ "$table_count" == 0 ]]; then
+        echo "trace validation failed: trace contains no tick data table" >&2
+        rm -rf "$validation_dir"
+        return 1
+      fi
+
+      if ! xcrun xctrace export \
+        --quiet \
+        --input "$trace" \
+        --xpath '(/trace-toc/run)[last()]/data/table[@schema="tick"]' \
+        --output "$data"; then
+        echo "trace validation failed: xctrace could not export data from '$trace'" >&2
+        rm -rf "$validation_dir"
+        return 1
+      fi
+      if ! row_count="$(xmllint --xpath 'count(/trace-query-result/node/row)' "$data")"; then
+        echo "trace validation failed: malformed trace data in '$trace'" >&2
+        rm -rf "$validation_dir"
+        return 1
+      fi
+      if [[ "$row_count" == 0 ]]; then
+        echo "trace validation failed: trace contains no recorded data" >&2
+        rm -rf "$validation_dir"
+        return 1
+      fi
+
+      rm -rf "$validation_dir"
+    }
 
     profile_target() {
       local bin="$1"
@@ -58,6 +132,8 @@ writeShellApplication {
         cargo instruments \
           "''${cargo_instruments_args[@]}" \
           -- "$@"
+
+      validate_trace "$output"
 
       echo "trace: $output"
       if [[ "''${INSTRUMENTS_NO_OPEN:-0}" == 1 ]]; then
