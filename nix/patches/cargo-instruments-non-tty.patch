@@ -1,0 +1,35 @@
+diff --git a/src/instruments.rs b/src/instruments.rs
+index 4d7a115..2e32215 100644
+--- a/src/instruments.rs
++++ b/src/instruments.rs
+@@ -503,10 +503,16 @@ fn log_command_string(command: &Command) {
+ fn get_tty() -> Result<Option<String>> {
+     let mut command = Command::new("ps");
+     command.arg("otty=").arg(std::process::id().to_string());
+-    Ok(String::from_utf8(command.output()?.stdout)?
++    let output = String::from_utf8(command.output()?.stdout)?;
++    Ok(tty_path_from_ps_output(&output))
++}
++
++fn tty_path_from_ps_output(output: &str) -> Option<String> {
++    output
+         .split_whitespace()
+         .next()
+-        .map(|tty| format!("/dev/{}", tty)))
++        .filter(|tty| *tty != "??" && *tty != "-")
++        .map(|tty| format!("/dev/{}", tty))
+ }
+ 
+ impl Display for XcodeInstruments {
+@@ -528,4 +537,11 @@ mod test {
+         assert_eq!(semver_from_utf8(b"11.1").unwrap(), Version::parse("11.1.0").unwrap());
+         assert_eq!(semver_from_utf8(b"11").unwrap(), Version::parse("11.0.0").unwrap());
+     }
++
++    #[test]
++    fn missing_tty_is_not_passed_to_xctrace() {
++        assert_eq!(tty_path_from_ps_output(" ??\n"), None);
++        assert_eq!(tty_path_from_ps_output(" -\n"), None);
++        assert_eq!(tty_path_from_ps_output(" ttys001\n"), Some("/dev/ttys001".into()));
++    }
+ }

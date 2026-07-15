@@ -17,7 +17,10 @@ rustPlatform.buildRustPackage rec {
     hash = "sha256-kM2kRjPGjaq7JJBRvP92yY7NqMAa7/QRmyDXHpMWzjQ=";
   };
 
-  patches = [./patches/cargo-instruments-rust-v0-test.patch];
+  patches = [
+    ./patches/cargo-instruments-rust-v0-test.patch
+    ./patches/cargo-instruments-non-tty.patch
+  ];
 
   cargoHash = "sha256-AYdvMJJGoO69QB2G8JHPNYhNDFzNdVFna/89UP70jRU=";
 
