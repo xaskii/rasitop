@@ -61,11 +61,107 @@ writeShellApplication {
       fi
     }
 
+    profile_activity() {
+      local duration_seconds="$1"
+      local warmup_seconds="''${ACTIVITY_WARMUP_SECONDS:-10}"
+      if [[ ! "$warmup_seconds" =~ ^[0-9]+$ ]]; then
+        echo "ACTIVITY_WARMUP_SECONDS must be a non-negative integer" >&2
+        exit 2
+      fi
+      if (( duration_seconds < 2 )); then
+        echo "Activity Monitor measurements require at least 2 seconds" >&2
+        exit 2
+      fi
+
+      local run_id="$timestamp-$$"
+      local trace="''${ACTIVITY_TRACE_OUTPUT:-$output_dir/rasitop-app-activity-$run_id.trace}"
+      local export_xml="''${ACTIVITY_XML_OUTPUT:-$output_dir/rasitop-app-activity-$run_id.xml}"
+      local summary="''${ACTIVITY_SUMMARY_OUTPUT:-$output_dir/rasitop-app-activity-$run_id.json}"
+      local app_log="''${ACTIVITY_APP_LOG:-$output_dir/rasitop-app-activity-$run_id.log}"
+      local app_executable="$repo_root/target/release/rasitop.app/Contents/MacOS/rasitop"
+      local summary_executable="$repo_root/target/release/rasitop-activity-summary"
+      local app_lifetime_seconds=$((warmup_seconds + duration_seconds + 30))
+
+      for path in "$trace" "$export_xml" "$summary" "$app_log"; do
+        mkdir -p "$(dirname "$path")"
+        if [[ -e "$path" ]]; then
+          echo "refusing to overwrite existing activity output: $path" >&2
+          exit 1
+        fi
+      done
+
+      cargo build \
+        --release \
+        --target-dir "$repo_root/target" \
+        --bin rasitop-app \
+        --bin rasitop-activity-summary >&2
+      if [[ ! -x "$app_executable" || ! -x "$summary_executable" ]]; then
+        echo "release app or Activity Monitor summarizer was not built" >&2
+        exit 1
+      fi
+
+      activity_app_pid=""
+      activity_summary_tmp="$summary.tmp.$$"
+      cleanup_activity() {
+        if [[ -n "''${activity_summary_tmp:-}" ]]; then
+          rm -f "$activity_summary_tmp"
+        fi
+        if [[ -n "''${activity_app_pid:-}" ]] && kill -0 "$activity_app_pid" 2>/dev/null; then
+          kill -TERM "$activity_app_pid" 2>/dev/null || true
+          wait "$activity_app_pid" 2>/dev/null || true
+        fi
+        activity_app_pid=""
+      }
+      trap cleanup_activity EXIT
+
+      "$app_executable" \
+        --profile-duration-seconds "$app_lifetime_seconds" \
+        >"$app_log" 2>&1 &
+      activity_app_pid=$!
+      sleep "$warmup_seconds"
+      if ! kill -0 "$activity_app_pid" 2>/dev/null; then
+        wait "$activity_app_pid" || true
+        echo "release app exited during warmup; log: $app_log" >&2
+        exit 1
+      fi
+
+      xcrun xctrace record \
+        --template "Activity Monitor" \
+        --attach "$activity_app_pid" \
+        --time-limit "''${duration_seconds}s" \
+        --output "$trace" \
+        --no-prompt >&2
+      if [[ ! -d "$trace" ]]; then
+        echo "Activity Monitor did not produce a trace at $trace" >&2
+        exit 1
+      fi
+
+      xcrun xctrace export \
+        --input "$trace" \
+        --xpath '/trace-toc/run[@number="1"]/data/table[@schema="activity-monitor-process-live"]' \
+        --output "$export_xml" >&2
+      if [[ ! -s "$export_xml" ]]; then
+        echo "Activity Monitor export is empty: $export_xml" >&2
+        exit 1
+      fi
+
+      "$summary_executable" "$export_xml" >"$activity_summary_tmp"
+      mv "$activity_summary_tmp" "$summary"
+      activity_summary_tmp=""
+
+      cleanup_activity
+      trap - EXIT
+      echo "trace: $trace" >&2
+      echo "export: $export_xml" >&2
+      echo "summary: $summary" >&2
+      cat "$summary"
+    }
+
     if [[ "''${1:-}" == app ]]; then
       mode="''${2:-all}"
       duration_seconds="''${3:-60}"
       if (( $# > 3 )) || [[ ! "$duration_seconds" =~ ^[1-9][0-9]*$ ]]; then
-        echo "usage: nix run .#profile -- app [cpu|allocations|all] [seconds]" >&2
+        echo "usage: nix run .#profile -- app [cpu|allocations|activity|all] [seconds]" >&2
         exit 2
       fi
       case "$mode" in
@@ -85,6 +181,9 @@ writeShellApplication {
             "$output" \
             --profile-duration-seconds "$duration_seconds"
           ;;
+        activity)
+          profile_activity "$duration_seconds"
+          ;;
         all)
           profile_target \
             rasitop-app \
@@ -98,7 +197,7 @@ writeShellApplication {
             --profile-duration-seconds "$duration_seconds"
           ;;
         *)
-          echo "usage: nix run .#profile -- app [cpu|allocations|all] [seconds]" >&2
+          echo "usage: nix run .#profile -- app [cpu|allocations|activity|all] [seconds]" >&2
           exit 2
           ;;
       esac
