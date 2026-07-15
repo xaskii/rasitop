@@ -53,3 +53,15 @@ Use `cargo test` if `cargo-nextest` is unavailable.
 
 Inspired by [macmon](https://github.com/vladkens/macmon) and
 [Stats](https://github.com/exelban/stats) by exelban.
+
+## CPU profiling
+
+```sh
+nix run .#profile -- record --interval 1ms --duration 10s
+```
+
+This uses the Rust version and components in `rust-toolchain.toml` plus
+cargo-instruments, compiles `std` and rasitop from source with full debug info
+and frame pointers, records a CPU Profiler trace, and opens it in Instruments.
+Builds are incremental after the first run. Set `INSTRUMENTS_NO_OPEN=1` to
+leave the trace unopened or `INSTRUMENTS_OUTPUT` to choose its path.

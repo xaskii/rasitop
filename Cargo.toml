@@ -18,3 +18,13 @@ ctrlc = "3.5"
 csv = "1.3"
 humantime = "2.1"
 serde = { version = "1.0.210", features = ["derive"] }
+
+# Keep optimized code while retaining what sampling profilers need for inline
+# stacks, source locations, and symbol names. This mirrors the profiling
+# profiles used by Ruff and uv.
+[profile.profiling]
+inherits = "release"
+debug = "full"
+strip = false
+lto = false
+split-debuginfo = "packed"
