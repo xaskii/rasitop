@@ -49,24 +49,23 @@ impl Decoder {
                 });
             }
         };
-        if info.data_size as usize != expected_size {
-            return Err(SmcError::DataTypeSize {
-                data_type: data_type_name(info),
-                expected: expected_size,
-                actual: info.data_size,
-            });
-        }
+        assert_eq!(
+            info.data_size as usize,
+            expected_size,
+            "SMC data type {:?} has invalid size",
+            data_type_name(info)
+        );
         Ok(decoder)
     }
 
     pub fn decode(self, bytes: &[u8]) -> Result<f64> {
         let value = match self {
-            Self::Float => f32::from_le_bytes(exact_bytes(bytes)?) as f64,
-            Self::SignedFixed7_8 => i16::from_be_bytes(exact_bytes(bytes)?) as f64 / 256.0,
-            Self::UnsignedFixed14_2 => u16::from_be_bytes(exact_bytes(bytes)?) as f64 / 4.0,
-            Self::Unsigned8 => f64::from(exact_bytes::<1>(bytes)?[0]),
-            Self::Unsigned16 => f64::from(u16::from_be_bytes(exact_bytes(bytes)?)),
-            Self::Unsigned32 => u32::from_be_bytes(exact_bytes(bytes)?) as f64,
+            Self::Float => f32::from_le_bytes(exact_bytes(bytes)) as f64,
+            Self::SignedFixed7_8 => i16::from_be_bytes(exact_bytes(bytes)) as f64 / 256.0,
+            Self::UnsignedFixed14_2 => u16::from_be_bytes(exact_bytes(bytes)) as f64 / 4.0,
+            Self::Unsigned8 => f64::from(exact_bytes::<1>(bytes)[0]),
+            Self::Unsigned16 => f64::from(u16::from_be_bytes(exact_bytes(bytes))),
+            Self::Unsigned32 => u32::from_be_bytes(exact_bytes(bytes)) as f64,
         };
         if !value.is_finite() {
             return Err(SmcError::NonFiniteValue);
@@ -75,11 +74,8 @@ impl Decoder {
     }
 }
 
-fn exact_bytes<const N: usize>(bytes: &[u8]) -> Result<[u8; N]> {
-    bytes.try_into().map_err(|_| SmcError::ValueSize {
-        expected: N,
-        actual: bytes.len(),
-    })
+fn exact_bytes<const N: usize>(bytes: &[u8]) -> [u8; N] {
+    bytes.try_into().expect("SMC value size was validated")
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -139,7 +135,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_sizes_unknown_types_and_non_finite_floats() {
-        assert!(Decoder::from_info(info(*b"flt ", 2)).is_err());
+        assert!(std::panic::catch_unwind(|| Decoder::from_info(info(*b"flt ", 2))).is_err());
         assert!(matches!(
             Decoder::from_info(info(*b"flag", 1)),
             Err(SmcError::UnsupportedDataType { data_type }) if data_type == "flag"
@@ -153,12 +149,6 @@ mod tests {
             decoder.decode(&f32::INFINITY.to_le_bytes()),
             Err(SmcError::NonFiniteValue)
         ));
-        assert!(matches!(
-            decoder.decode(&[0; 3]),
-            Err(SmcError::ValueSize {
-                expected: 4,
-                actual: 3
-            })
-        ));
+        assert!(std::panic::catch_unwind(|| decoder.decode(&[0; 3])).is_err());
     }
 }

@@ -1,4 +1,18 @@
-use anyhow::{Context, Result, ensure};
+use thiserror::Error;
+
+type Result<T> = std::result::Result<T, CpuError>;
+
+#[derive(Debug, Error)]
+pub enum CpuError {
+    #[error("{provider} CPU sampling requires macOS")]
+    UnsupportedPlatform { provider: &'static str },
+
+    #[error("host_statistics(HOST_CPU_LOAD_INFO) failed with kern_return_t {status}")]
+    HostStatistics { status: i32 },
+
+    #[error("host_processor_info(PROCESSOR_CPU_LOAD_INFO) failed with kern_return_t {status}")]
+    HostProcessorInfo { status: i32 },
+}
 
 const CPU_STATE_USER: usize = 0;
 const CPU_STATE_SYSTEM: usize = 1;
@@ -87,7 +101,7 @@ impl MachCpuProvider {
     /// previous read. The first call establishes the baseline and returns
     /// `None`.
     pub fn sample(&mut self) -> Result<Option<CpuSample>> {
-        let current = read_cpu_ticks().context("read Mach host CPU counters")?;
+        let current = read_cpu_ticks()?;
         let previous = self.previous.replace(current);
         Ok(previous.and_then(|previous| current.deltas_since(previous).ratios()))
     }
@@ -108,7 +122,7 @@ impl MachPerCoreProvider {
     /// utilization since the previous read. A first observation or topology
     /// change establishes a new baseline and returns `false`.
     pub fn sample(&mut self) -> Result<bool> {
-        let current = read_per_core_ticks().context("read per-core Mach CPU counters")?;
+        let current = read_per_core_ticks()?;
         let current = current.as_slice();
 
         if self.previous.len() != current.len() {
@@ -141,9 +155,7 @@ fn build_per_core_samples(
         let Some(usage) = current.deltas_since(previous).ratios() else {
             continue;
         };
-        let Ok(logical_cpu) = u32::try_from(logical_cpu) else {
-            continue;
-        };
+        let logical_cpu = u32::try_from(logical_cpu).expect("logical CPU index must fit in u32");
         samples.push(PerCoreSample { logical_cpu, usage });
     }
 }
@@ -179,7 +191,7 @@ fn read_cpu_ticks() -> Result<CpuTicks> {
     let mut info = MaybeUninit::<HostCpuLoadInfo>::uninit();
     let expected_count = size_of::<HostCpuLoadInfo>() / size_of::<c_int>();
     let mut count = MachMsgTypeNumber::try_from(expected_count)
-        .context("HOST_CPU_LOAD_INFO count does not fit in mach_msg_type_number_t")?;
+        .expect("HOST_CPU_LOAD_INFO count must fit in mach_msg_type_number_t");
 
     // SAFETY: `info` points to writable storage with the layout required by
     // HOST_CPU_LOAD_INFO, and `count` reports that storage in integer_t units.
@@ -193,13 +205,12 @@ fn read_cpu_ticks() -> Result<CpuTicks> {
         )
     };
 
-    ensure!(
-        status == KERN_SUCCESS,
-        "host_statistics(HOST_CPU_LOAD_INFO) failed with kern_return_t {status}"
-    );
-    ensure!(
+    if status != KERN_SUCCESS {
+        return Err(CpuError::HostStatistics { status });
+    }
+    assert!(
         count as usize >= expected_count,
-        "host_statistics returned {count} integers, expected {expected_count}"
+        "host_statistics returned too few CPU counters"
     );
 
     // SAFETY: a successful `host_statistics` call with the expected count
@@ -284,14 +295,10 @@ fn read_per_core_ticks() -> Result<ProcessorInfoBuffer> {
             &mut integer_count,
         )
     };
-    ensure!(
-        status == KERN_SUCCESS,
-        "host_processor_info(PROCESSOR_CPU_LOAD_INFO) failed with kern_return_t {status}"
-    );
-    ensure!(
-        !pointer.is_null(),
-        "host_processor_info returned a null buffer"
-    );
+    if status != KERN_SUCCESS {
+        return Err(CpuError::HostProcessorInfo { status });
+    }
+    assert!(!pointer.is_null(), "host_processor_info returned null");
 
     let buffer = ProcessorInfoBuffer {
         pointer,
@@ -301,12 +308,10 @@ fn read_per_core_ticks() -> Result<ProcessorInfoBuffer> {
     let expected_count = buffer
         .processor_count
         .checked_mul(INTEGERS_PER_CPU)
-        .context("per-core CPU counter count overflow")?;
-    ensure!(
-        buffer.integer_count == expected_count,
-        "host_processor_info returned {} integers for {} CPUs, expected {expected_count}",
-        buffer.integer_count,
-        buffer.processor_count
+        .expect("per-core CPU counter count overflowed");
+    assert_eq!(
+        buffer.integer_count, expected_count,
+        "host_processor_info returned a malformed CPU buffer"
     );
 
     Ok(buffer)
@@ -314,7 +319,9 @@ fn read_per_core_ticks() -> Result<ProcessorInfoBuffer> {
 
 #[cfg(not(target_os = "macos"))]
 fn read_cpu_ticks() -> Result<CpuTicks> {
-    anyhow::bail!("Mach CPU sampling requires macOS")
+    Err(CpuError::UnsupportedPlatform {
+        provider: "aggregate Mach",
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -329,15 +336,26 @@ impl ProcessorInfoBuffer {
 
 #[cfg(not(target_os = "macos"))]
 fn read_per_core_ticks() -> Result<ProcessorInfoBuffer> {
-    anyhow::bail!("per-core Mach CPU sampling requires macOS")
+    Err(CpuError::UnsupportedPlatform {
+        provider: "per-core Mach",
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CpuDeltas, CpuTicks, PerCoreSample, build_per_core_samples};
+    use super::{CpuDeltas, CpuError, CpuTicks, PerCoreSample, build_per_core_samples};
 
     fn assert_close(actual: f64, expected: f64) {
         assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn mach_failures_preserve_the_native_status() {
+        let error = CpuError::HostStatistics { status: 5 };
+        assert_eq!(
+            error.to_string(),
+            "host_statistics(HOST_CPU_LOAD_INFO) failed with kern_return_t 5"
+        );
     }
 
     #[test]

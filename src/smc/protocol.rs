@@ -92,9 +92,7 @@ impl SmcConnection {
         if status != 0 {
             return Err(SmcError::Open { status });
         }
-        if handle == 0 {
-            return Err(SmcError::NullConnection);
-        }
+        assert_ne!(handle, 0, "IOServiceOpen returned a null connection");
         Ok(Self { handle })
     }
 
@@ -107,11 +105,7 @@ impl SmcConnection {
         let key = SmcKey::from_bytes(*b"#KEY");
         let info = self.read_key_info(key)?;
         let bytes = self.read_bytes(key, info)?;
-        if info.data_size != 4 {
-            return Err(SmcError::KeyCountSize {
-                actual: info.data_size,
-            });
-        }
+        assert_eq!(info.data_size, 4, "#KEY must be a ui32");
         Ok(u32::from_be_bytes(
             bytes[..4].try_into().expect("four bytes"),
         ))
@@ -133,13 +127,11 @@ impl SmcConnection {
             ..SmcKeyData::default()
         };
         let output = self.call(&input)?;
-        if output.key_info.data_size as usize > MAX_SMC_DATA_SIZE {
-            return Err(SmcError::KeyDataSize {
-                key: key.name(),
-                actual: output.key_info.data_size,
-                maximum: MAX_SMC_DATA_SIZE,
-            });
-        }
+        assert!(
+            output.key_info.data_size as usize <= MAX_SMC_DATA_SIZE,
+            "SMC key {} exceeds the protocol buffer",
+            key.name()
+        );
         Ok(output.key_info)
     }
 
@@ -185,12 +177,11 @@ impl SmcConnection {
         if status != 0 {
             return Err(SmcError::Call { status });
         }
-        if output_size != size_of::<SmcKeyData>() {
-            return Err(SmcError::OutputSize {
-                actual: output_size,
-                expected: size_of::<SmcKeyData>(),
-            });
-        }
+        assert_eq!(
+            output_size,
+            size_of::<SmcKeyData>(),
+            "AppleSMC changed its response layout"
+        );
         if output.result == SMC_KEY_NOT_FOUND {
             return Err(SmcError::KeyNotFound {
                 key: SmcKey::from_raw(input.key).name(),
@@ -252,9 +243,7 @@ pub(super) fn cpu_brand() -> Result<String> {
             status,
         });
     }
-    if length <= 1 {
-        return Err(SmcError::EmptyCpuBrand);
-    }
+    assert!(length > 1, "CPU brand sysctl returned an empty value");
 
     let mut bytes = vec![0_u8; length];
     let status = unsafe {
@@ -276,7 +265,7 @@ pub(super) fn cpu_brand() -> Result<String> {
     if bytes.last() == Some(&0) {
         bytes.pop();
     }
-    String::from_utf8(bytes).map_err(SmcError::CpuBrandUtf8)
+    Ok(String::from_utf8(bytes).expect("CPU brand must be UTF-8"))
 }
 
 #[cfg(not(target_os = "macos"))]

@@ -101,6 +101,12 @@ pub fn record<W: Write>(
     .context("install Ctrl-C handler")?;
 
     let mut engine = CpuEngine::new(per_core_writer.is_some()).context("initialize CPU engine")?;
+    if let Some(error) = engine.sensor_error() {
+        eprintln!(
+            "rasitop: SMC unavailable (error_flags={:#018x}): {error}",
+            crate::smc::ERROR_SMC_INITIALIZATION | error.category_flag()
+        );
+    }
     let mut per_core_csv = per_core_writer.map(per_core_csv_writer).transpose()?;
 
     let start = Instant::now();

@@ -1,6 +1,6 @@
-use std::string::FromUtf8Error;
-
 use thiserror::Error;
+
+use super::{ERROR_SMC_ACCESS, ERROR_SMC_DATA, ERROR_SMC_IO};
 
 pub type Result<T> = std::result::Result<T, SmcError>;
 
@@ -18,14 +18,8 @@ pub enum SmcError {
     #[error("IOServiceOpen(AppleSMC) failed with IOKit status {status}")]
     Open { status: i32 },
 
-    #[error("IOServiceOpen returned a null AppleSMC connection")]
-    NullConnection,
-
     #[error("AppleSMC call failed with IOKit status {status}")]
     Call { status: i32 },
-
-    #[error("AppleSMC returned {actual} bytes, expected {expected}")]
-    OutputSize { actual: usize, expected: usize },
 
     #[error("SMC key {key} not found")]
     KeyNotFound { key: String },
@@ -33,28 +27,8 @@ pub enum SmcError {
     #[error("AppleSMC returned result {result} for key {key}")]
     SmcResult { key: String, result: u8 },
 
-    #[error("SMC key {key} reports an impossible size {actual}; maximum is {maximum}")]
-    KeyDataSize {
-        key: String,
-        actual: u32,
-        maximum: usize,
-    },
-
-    #[error("#KEY has unexpected size {actual}; expected 4")]
-    KeyCountSize { actual: u32 },
-
     #[error("unsupported SMC data type {data_type:?}")]
     UnsupportedDataType { data_type: String },
-
-    #[error("SMC data type {data_type:?} expects {expected} bytes, got {actual}")]
-    DataTypeSize {
-        data_type: String,
-        expected: usize,
-        actual: u32,
-    },
-
-    #[error("expected {expected} SMC value bytes, got {actual}")]
-    ValueSize { expected: usize, actual: usize },
 
     #[error("SMC value is not finite")]
     NonFiniteValue,
@@ -65,15 +39,45 @@ pub enum SmcError {
         status: i32,
     },
 
-    #[error("CPU brand sysctl returned an empty value")]
-    EmptyCpuBrand,
-
-    #[error("CPU brand is not UTF-8")]
-    CpuBrandUtf8(#[source] FromUtf8Error),
-
     #[error("unsupported CPU brand {brand:?}")]
     UnsupportedCpu { brand: String },
 
     #[error("no supported SMC sensors resolved")]
     NoSensors,
+}
+
+impl SmcError {
+    /// Broad failure category for snapshots, CSV, and the C ABI.
+    pub const fn category_flag(&self) -> u64 {
+        match self {
+            Self::UnsupportedPlatform
+            | Self::ServiceMatching
+            | Self::ServiceNotFound
+            | Self::Open { .. }
+            | Self::CpuBrandSysctl { .. }
+            | Self::UnsupportedCpu { .. } => ERROR_SMC_ACCESS,
+            Self::Call { .. } | Self::KeyNotFound { .. } | Self::SmcResult { .. } => ERROR_SMC_IO,
+            Self::UnsupportedDataType { .. } | Self::NonFiniteValue | Self::NoSensors => {
+                ERROR_SMC_DATA
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ERROR_SMC_ACCESS, ERROR_SMC_DATA, ERROR_SMC_IO, SmcError};
+
+    #[test]
+    fn errors_map_to_broad_runtime_categories() {
+        assert_eq!(
+            SmcError::Open { status: 1 }.category_flag(),
+            ERROR_SMC_ACCESS
+        );
+        assert_eq!(
+            SmcError::KeyNotFound { key: "PSTR".into() }.category_flag(),
+            ERROR_SMC_IO
+        );
+        assert_eq!(SmcError::NonFiniteValue.category_flag(), ERROR_SMC_DATA);
+    }
 }

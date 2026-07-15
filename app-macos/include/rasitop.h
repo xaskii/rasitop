@@ -16,6 +16,18 @@ extern "C" {
 #define rasitop_error_engine -2
 #define rasitop_error_panic -3
 
+#define rasitop_sensor_capability_cpu_temperature UINT64_C(0x1)
+#define rasitop_sensor_capability_fan_speed UINT64_C(0x2)
+#define rasitop_sensor_capability_system_power UINT64_C(0x4)
+
+#define rasitop_sensor_error_cpu_temperature UINT64_C(0x1)
+#define rasitop_sensor_error_fan_speed UINT64_C(0x2)
+#define rasitop_sensor_error_system_power UINT64_C(0x4)
+#define rasitop_sensor_error_smc_initialization UINT64_C(0x8000000000000000)
+#define rasitop_sensor_error_smc_access UINT64_C(0x4000000000000000)
+#define rasitop_sensor_error_smc_io UINT64_C(0x2000000000000000)
+#define rasitop_sensor_error_smc_data UINT64_C(0x1000000000000000)
+
 typedef struct rasitop_engine rasitop_engine;
 
 typedef struct {

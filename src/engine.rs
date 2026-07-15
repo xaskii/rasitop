@@ -1,11 +1,28 @@
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, ensure};
+use thiserror::Error;
 
-use crate::cpu::{CpuSample, MachCpuProvider, MachPerCoreProvider, PerCoreSample};
-use crate::smc::{SensorSample, SmcProvider};
+use crate::cpu::{CpuError, CpuSample, MachCpuProvider, MachPerCoreProvider, PerCoreSample};
+use crate::smc::{SensorSample, SmcError, SmcProvider};
 
 pub const MAX_LOGICAL_CPUS: usize = 64;
+
+type Result<T> = std::result::Result<T, EngineError>;
+
+#[derive(Debug, Error)]
+pub enum EngineError {
+    #[error("failed to establish aggregate CPU counter baseline")]
+    AggregateBaseline(#[source] CpuError),
+
+    #[error("failed to establish per-core CPU counter baseline")]
+    PerCoreBaseline(#[source] CpuError),
+
+    #[error("failed to sample aggregate CPU utilization")]
+    AggregateSample(#[source] CpuError),
+
+    #[error("failed to sample per-core CPU utilization")]
+    PerCoreSample(#[source] CpuError),
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct EmissionTiming {
@@ -82,6 +99,8 @@ pub struct CpuEngine {
     aggregate: MachCpuProvider,
     per_core: Option<MachPerCoreProvider>,
     sensors: Option<SmcProvider>,
+    sensor_fallback: SensorSample,
+    sensor_error: Option<SmcError>,
     emissions: EmissionTimeline,
     snapshot: EngineSnapshot,
 }
@@ -89,30 +108,42 @@ pub struct CpuEngine {
 impl CpuEngine {
     pub fn new(sample_per_core: bool) -> Result<Self> {
         let mut aggregate = MachCpuProvider::new();
-        aggregate
-            .sample()
-            .context("establish aggregate CPU counter baseline")?;
+        aggregate.sample().map_err(EngineError::AggregateBaseline)?;
 
         let per_core = if sample_per_core {
             let mut provider = MachPerCoreProvider::new();
-            provider
-                .sample()
-                .context("establish per-core CPU counter baseline")?;
+            provider.sample().map_err(EngineError::PerCoreBaseline)?;
             Some(provider)
         } else {
             None
+        };
+
+        let (sensors, sensor_fallback, sensor_error) = match SmcProvider::new() {
+            Ok(provider) => (Some(provider), SensorSample::default(), None),
+            Err(error) => {
+                let fallback = SensorSample::unavailable(&error);
+                (None, fallback, Some(error))
+            }
         };
 
         let started_at = Instant::now();
         Ok(Self {
             aggregate,
             per_core,
-            // Sensor availability must not prevent CPU-only operation. A
-            // missing provider leaves its capability flags clear.
-            sensors: SmcProvider::new().ok(),
+            // Sensor availability must not prevent CPU-only operation. The
+            // fallback keeps a stable failure category in every snapshot.
+            sensors,
+            sensor_fallback,
+            sensor_error,
             emissions: EmissionTimeline::new(started_at),
             snapshot: EngineSnapshot::default(),
         })
+    }
+
+    /// Returns the initialization failure retained for diagnostics when the
+    /// engine is operating in CPU-only mode.
+    pub fn sensor_error(&self) -> Option<&SmcError> {
+        self.sensor_error.as_ref()
     }
 
     pub fn sample(&mut self) -> Result<Option<&EngineSnapshot>> {
@@ -120,11 +151,9 @@ impl CpuEngine {
         let aggregate = self
             .aggregate
             .sample()
-            .context("sample aggregate CPU utilization")?;
+            .map_err(EngineError::AggregateSample)?;
         let per_core_available = match &mut self.per_core {
-            Some(provider) => provider
-                .sample()
-                .context("sample per-core CPU utilization")?,
+            Some(provider) => provider.sample().map_err(EngineError::PerCoreSample)?,
             None => false,
         };
 
@@ -134,17 +163,16 @@ impl CpuEngine {
         let sensors = self
             .sensors
             .as_mut()
-            .map_or_else(SensorSample::default, SmcProvider::sample);
+            .map_or(self.sensor_fallback, SmcProvider::sample);
 
         let per_core_count = if per_core_available {
             let samples = self
                 .per_core
                 .as_ref()
                 .map_or(&[][..], MachPerCoreProvider::samples);
-            ensure!(
+            assert!(
                 samples.len() <= MAX_LOGICAL_CPUS,
-                "{} logical CPUs exceeds engine capacity {MAX_LOGICAL_CPUS}",
-                samples.len()
+                "logical CPU count exceeds engine capacity"
             );
             self.snapshot.per_core[..samples.len()].copy_from_slice(samples);
             samples.len() as u32
@@ -170,8 +198,24 @@ fn duration_ns(duration: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{EmissionTimeline, duration_ns};
+    use std::error::Error as _;
     use std::time::{Duration, Instant};
+
+    use super::{EmissionTimeline, EngineError, duration_ns};
+    use crate::cpu::CpuError;
+
+    #[test]
+    fn engine_errors_keep_the_cpu_error_as_their_source() {
+        let error = EngineError::AggregateSample(CpuError::HostStatistics { status: 5 });
+        assert_eq!(
+            error.to_string(),
+            "failed to sample aggregate CPU utilization"
+        );
+        assert_eq!(
+            error.source().map(ToString::to_string).as_deref(),
+            Some("host_statistics(HOST_CPU_LOAD_INFO) failed with kern_return_t 5")
+        );
+    }
 
     #[test]
     fn intervals_span_only_emitted_snapshots() {
