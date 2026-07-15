@@ -34,7 +34,8 @@ writeShellApplication {
       local bin="$1"
       local template="$2"
       local output="$3"
-      shift 3
+      local time_limit_millis="$4"
+      shift 4
 
       local cargo_instruments_args=(
         --profile profiling
@@ -42,6 +43,9 @@ writeShellApplication {
         --template "$template"
         --output "$output"
       )
+      if [[ -n "$time_limit_millis" ]]; then
+        cargo_instruments_args+=(--time-limit "$time_limit_millis")
+      fi
       if [[ "''${INSTRUMENTS_NO_OPEN:-0}" == 1 ]]; then
         cargo_instruments_args+=(--no-open)
       fi
@@ -160,10 +164,16 @@ writeShellApplication {
     if [[ "''${1:-}" == app ]]; then
       mode="''${2:-all}"
       duration_seconds="''${3:-60}"
-      if (( $# > 3 )) || [[ ! "$duration_seconds" =~ ^[1-9][0-9]*$ ]]; then
+      watchdog_grace_seconds="''${INSTRUMENTS_WATCHDOG_GRACE_SECONDS:-10}"
+      if (( $# > 3 )) \
+        || [[ ! "$duration_seconds" =~ ^[1-9][0-9]*$ ]] \
+        || [[ ! "$watchdog_grace_seconds" =~ ^[0-9]+$ ]]; then
         echo "usage: nix run .#profile -- app [cpu|allocations|activity|all] [seconds]" >&2
         exit 2
       fi
+      time_limit_millis="$((
+        (duration_seconds + watchdog_grace_seconds) * 1000
+      ))"
       case "$mode" in
         cpu)
           output="''${INSTRUMENTS_OUTPUT:-$output_dir/rasitop-app-cpu-$timestamp.trace}"
@@ -171,6 +181,7 @@ writeShellApplication {
             rasitop-app \
             "CPU Profiler" \
             "$output" \
+            "$time_limit_millis" \
             --profile-duration-seconds "$duration_seconds"
           ;;
         allocations)
@@ -179,6 +190,7 @@ writeShellApplication {
             rasitop-app \
             Allocations \
             "$output" \
+            "$time_limit_millis" \
             --profile-duration-seconds "$duration_seconds"
           ;;
         activity)
@@ -189,11 +201,13 @@ writeShellApplication {
             rasitop-app \
             "CPU Profiler" \
             "$output_dir/rasitop-app-cpu-$timestamp.trace" \
+            "$time_limit_millis" \
             --profile-duration-seconds "$duration_seconds"
           profile_target \
             rasitop-app \
             Allocations \
             "$output_dir/rasitop-app-allocations-$timestamp.trace" \
+            "$time_limit_millis" \
             --profile-duration-seconds "$duration_seconds"
           ;;
         *)
@@ -209,6 +223,11 @@ writeShellApplication {
     fi
     template="''${INSTRUMENTS_TEMPLATE:-CPU Profiler}"
     output="''${INSTRUMENTS_OUTPUT:-$output_dir/rasitop-cpu-$timestamp.trace}"
-    profile_target rasitop "$template" "$output" "$@"
+    time_limit_millis="''${INSTRUMENTS_TIME_LIMIT_MS:-}"
+    if [[ -n "$time_limit_millis" && ! "$time_limit_millis" =~ ^[1-9][0-9]*$ ]]; then
+      echo "INSTRUMENTS_TIME_LIMIT_MS must be a positive integer" >&2
+      exit 2
+    fi
+    profile_target rasitop "$template" "$output" "$time_limit_millis" "$@"
   '';
 }
