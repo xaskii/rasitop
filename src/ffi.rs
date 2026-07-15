@@ -106,6 +106,7 @@ mod tests {
     };
     use crate::cpu::{CpuSample, PerCoreSample};
     use crate::engine::EngineSnapshot;
+    use crate::smc::SensorSample;
 
     #[test]
     fn ffi_layout_matches_public_header() {
@@ -115,11 +116,17 @@ mod tests {
         assert_eq!(size_of::<PerCoreSample>(), 48);
         assert_eq!(align_of::<PerCoreSample>(), 8);
         assert_eq!(offset_of!(PerCoreSample, usage), 8);
-        assert_eq!(size_of::<EngineSnapshot>(), 3_152);
+        assert_eq!(size_of::<SensorSample>(), 48);
+        assert_eq!(align_of::<SensorSample>(), 8);
+        assert_eq!(offset_of!(SensorSample, fan_rpm), 16);
+        assert_eq!(offset_of!(SensorSample, system_power_w), 24);
+        assert_eq!(offset_of!(SensorSample, capability_flags), 32);
+        assert_eq!(size_of::<EngineSnapshot>(), 3_200);
         assert_eq!(align_of::<EngineSnapshot>(), 8);
         assert_eq!(offset_of!(EngineSnapshot, aggregate), 32);
         assert_eq!(offset_of!(EngineSnapshot, per_core_count), 72);
         assert_eq!(offset_of!(EngineSnapshot, per_core), 80);
+        assert_eq!(offset_of!(EngineSnapshot, sensors), 3_152);
     }
 
     #[test]

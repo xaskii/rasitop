@@ -4,3 +4,4 @@ pub mod engine;
 pub mod ffi;
 pub mod measure;
 pub mod record;
+pub mod smc;

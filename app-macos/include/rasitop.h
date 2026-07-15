@@ -32,6 +32,15 @@ typedef struct {
 } rasitop_per_core_sample;
 
 typedef struct {
+  double cpu_temp_max_c;
+  double cpu_temp_avg_c;
+  double fan_rpm;
+  double system_power_w;
+  uint64_t capability_flags;
+  uint64_t error_flags;
+} rasitop_sensor_sample;
+
+typedef struct {
   uint64_t sequence;
   uint64_t monotonic_ns;
   uint64_t interval_ns;
@@ -39,6 +48,7 @@ typedef struct {
   rasitop_cpu_sample aggregate;
   uint32_t per_core_count;
   rasitop_per_core_sample per_core[rasitop_max_logical_cpus];
+  rasitop_sensor_sample sensors;
 } rasitop_engine_snapshot;
 
 int32_t rasitop_engine_create(rasitop_engine **out_engine);
@@ -63,7 +73,15 @@ _Static_assert(sizeof(rasitop_per_core_sample) == 48,
                "rasitop_per_core_sample ABI layout changed");
 _Static_assert(offsetof(rasitop_per_core_sample, usage) == 8,
                "rasitop_per_core_sample ABI field order changed");
-_Static_assert(sizeof(rasitop_engine_snapshot) == 3152,
+_Static_assert(sizeof(rasitop_sensor_sample) == 48,
+               "rasitop_sensor_sample ABI layout changed");
+_Static_assert(offsetof(rasitop_sensor_sample, fan_rpm) == 16,
+               "rasitop_sensor_sample field order changed");
+_Static_assert(offsetof(rasitop_sensor_sample, system_power_w) == 24,
+               "rasitop_sensor_sample field order changed");
+_Static_assert(offsetof(rasitop_sensor_sample, capability_flags) == 32,
+               "rasitop_sensor_sample field order changed");
+_Static_assert(sizeof(rasitop_engine_snapshot) == 3200,
                "rasitop_engine_snapshot ABI layout changed");
 _Static_assert(offsetof(rasitop_engine_snapshot, aggregate) == 32,
                "rasitop_engine_snapshot aggregate offset changed");
@@ -71,6 +89,8 @@ _Static_assert(offsetof(rasitop_engine_snapshot, per_core_count) == 72,
                "rasitop_engine_snapshot core count offset changed");
 _Static_assert(offsetof(rasitop_engine_snapshot, per_core) == 80,
                "rasitop_engine_snapshot core array offset changed");
+_Static_assert(offsetof(rasitop_engine_snapshot, sensors) == 3152,
+               "rasitop_engine_snapshot sensor offset changed");
 
 #ifdef __cplusplus
 }

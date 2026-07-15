@@ -10,7 +10,7 @@ use crate::cpu::PerCoreSample;
 use crate::engine::{CpuEngine, EngineSnapshot};
 
 const SCHEMA_VERSION: u8 = 1;
-const CSV_HEADER: [&str; 11] = [
+const CSV_HEADER: [&str; 17] = [
     "schema_version",
     "sequence",
     "timestamp_utc",
@@ -22,6 +22,12 @@ const CSV_HEADER: [&str; 11] = [
     "cpu_system_ratio",
     "cpu_nice_ratio",
     "cpu_idle_ratio",
+    "cpu_temp_max_c",
+    "cpu_temp_avg_c",
+    "fan_rpm",
+    "system_power_w",
+    "capability_flags",
+    "error_flags",
 ];
 const PER_CORE_CSV_HEADER: [&str; 10] = [
     "schema_version",
@@ -56,6 +62,12 @@ struct CsvRecord<'a> {
     cpu_system_ratio: f64,
     cpu_nice_ratio: f64,
     cpu_idle_ratio: f64,
+    cpu_temp_max_c: Option<f64>,
+    cpu_temp_avg_c: Option<f64>,
+    fan_rpm: Option<f64>,
+    system_power_w: Option<f64>,
+    capability_flags: u64,
+    error_flags: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -165,6 +177,12 @@ fn write_sample<W: Write>(
         cpu_system_ratio: snapshot.aggregate.system_ratio,
         cpu_nice_ratio: snapshot.aggregate.nice_ratio,
         cpu_idle_ratio: snapshot.aggregate.idle_ratio,
+        cpu_temp_max_c: snapshot.sensors.cpu_temp_max_c(),
+        cpu_temp_avg_c: snapshot.sensors.cpu_temp_avg_c(),
+        fan_rpm: snapshot.sensors.fan_rpm(),
+        system_power_w: snapshot.sensors.system_power_w(),
+        capability_flags: snapshot.sensors.capability_flags,
+        error_flags: snapshot.sensors.error_flags,
     };
 
     csv.serialize(record).context("write CPU CSV row")
@@ -203,6 +221,9 @@ mod tests {
     };
     use crate::cpu::CpuSample;
     use crate::engine::MAX_LOGICAL_CPUS;
+    use crate::smc::{
+        CAPABILITY_CPU_TEMPERATURE, CAPABILITY_FAN_SPEED, CAPABILITY_SYSTEM_POWER, SensorSample,
+    };
 
     #[test]
     fn writes_versioned_csv_with_units_in_headers() {
@@ -222,6 +243,16 @@ mod tests {
             },
             per_core_count: 0,
             per_core: [PerCoreSample::default(); MAX_LOGICAL_CPUS],
+            sensors: SensorSample {
+                cpu_temp_max_c: 67.5,
+                cpu_temp_avg_c: 61.25,
+                fan_rpm: 2_300.0,
+                system_power_w: 12.5,
+                capability_flags: CAPABILITY_CPU_TEMPERATURE
+                    | CAPABILITY_FAN_SPEED
+                    | CAPABILITY_SYSTEM_POWER,
+                error_flags: 0,
+            },
         };
 
         write_sample(&mut csv, "2026-07-14T20:00:00.000Z", &snapshot).expect("write sample");
@@ -233,12 +264,12 @@ mod tests {
         assert_eq!(
             lines.next(),
             Some(
-                "schema_version,sequence,timestamp_utc,monotonic_ms,interval_ms,sample_duration_us,cpu_total_ratio,cpu_user_ratio,cpu_system_ratio,cpu_nice_ratio,cpu_idle_ratio"
+                "schema_version,sequence,timestamp_utc,monotonic_ms,interval_ms,sample_duration_us,cpu_total_ratio,cpu_user_ratio,cpu_system_ratio,cpu_nice_ratio,cpu_idle_ratio,cpu_temp_max_c,cpu_temp_avg_c,fan_rpm,system_power_w,capability_flags,error_flags"
             )
         );
         let row = lines.next().expect("data row");
         assert!(row.starts_with("1,1,"));
-        assert!(row.contains(",1000.0,1000.0,42,0.7,0.4,0.2,0.1,0.3"));
+        assert!(row.contains(",1000.0,1000.0,42,0.7,0.4,0.2,0.1,0.3,67.5,61.25,2300.0,12.5,7,0"));
         assert_eq!(lines.next(), None);
     }
 

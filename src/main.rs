@@ -9,6 +9,7 @@ use clap::{Args, Parser, Subcommand};
 
 use rasitop::measure::{self, MeasureMode, MeasureOptions};
 use rasitop::record::{self, RecordOptions};
+use rasitop::smc;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Low-overhead Apple Silicon performance recorder")]
@@ -24,6 +25,20 @@ enum Command {
 
     /// Record aggregate CPU utilization as CSV.
     Record(RecordArgs),
+
+    /// Enumerate and decode every AppleSMC key for diagnostics.
+    SmcScan(SmcScanArgs),
+}
+
+#[derive(Debug, Args)]
+struct SmcScanArgs {
+    /// Keep only four-character keys beginning with this prefix. Repeatable.
+    #[arg(long = "prefix")]
+    prefixes: Vec<String>,
+
+    /// Write JSON diagnostics to this path instead of stdout.
+    #[arg(long, value_name = "PATH")]
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -124,6 +139,27 @@ fn run() -> Result<()> {
                 },
             )
             .context("record CPU samples")
+        }
+        Command::SmcScan(args) => {
+            let mut report = smc::discover().context("enumerate AppleSMC keys")?;
+            if !args.prefixes.is_empty() {
+                report.keys.retain(|record| {
+                    args.prefixes
+                        .iter()
+                        .any(|prefix| record.key.starts_with(prefix))
+                });
+            }
+            let writer: Box<dyn Write> = match args.output {
+                Some(path) => {
+                    let file = File::create(&path)
+                        .with_context(|| format!("create SMC scan at {}", path.display()))?;
+                    Box::new(file)
+                }
+                None => Box::new(io::stdout()),
+            };
+            let mut writer = BufWriter::new(writer);
+            serde_json::to_writer_pretty(&mut writer, &report).context("write SMC diagnostics")?;
+            writer.write_all(b"\n").context("finish SMC diagnostics")
         }
     }
 }

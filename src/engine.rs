@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, ensure};
 
 use crate::cpu::{CpuSample, MachCpuProvider, MachPerCoreProvider, PerCoreSample};
+use crate::smc::{SensorSample, SmcProvider};
 
 pub const MAX_LOGICAL_CPUS: usize = 64;
 
@@ -51,6 +52,7 @@ pub struct EngineSnapshot {
     pub aggregate: CpuSample,
     pub per_core_count: u32,
     pub per_core: [PerCoreSample; MAX_LOGICAL_CPUS],
+    pub sensors: SensorSample,
 }
 
 impl Default for EngineSnapshot {
@@ -63,6 +65,7 @@ impl Default for EngineSnapshot {
             aggregate: CpuSample::default(),
             per_core_count: 0,
             per_core: [PerCoreSample::default(); MAX_LOGICAL_CPUS],
+            sensors: SensorSample::default(),
         }
     }
 }
@@ -78,6 +81,7 @@ impl EngineSnapshot {
 pub struct CpuEngine {
     aggregate: MachCpuProvider,
     per_core: Option<MachPerCoreProvider>,
+    sensors: Option<SmcProvider>,
     emissions: EmissionTimeline,
     snapshot: EngineSnapshot,
 }
@@ -103,6 +107,9 @@ impl CpuEngine {
         Ok(Self {
             aggregate,
             per_core,
+            // Sensor availability must not prevent CPU-only operation. A
+            // missing provider leaves its capability flags clear.
+            sensors: SmcProvider::new().ok(),
             emissions: EmissionTimeline::new(started_at),
             snapshot: EngineSnapshot::default(),
         })
@@ -124,6 +131,10 @@ impl CpuEngine {
         let Some(aggregate) = aggregate else {
             return Ok(None);
         };
+        let sensors = self
+            .sensors
+            .as_mut()
+            .map_or_else(SensorSample::default, SmcProvider::sample);
 
         let per_core_count = if per_core_available {
             let samples = self
@@ -147,6 +158,7 @@ impl CpuEngine {
         self.snapshot.interval_ns = duration_ns(timing.interval);
         self.snapshot.aggregate = aggregate;
         self.snapshot.per_core_count = per_core_count;
+        self.snapshot.sensors = sensors;
         self.snapshot.sample_duration_ns = duration_ns(sample_started_at.elapsed());
         Ok(Some(&self.snapshot))
     }
