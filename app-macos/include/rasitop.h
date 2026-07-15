@@ -16,6 +16,9 @@ extern "C" {
 #define rasitop_error_engine -2
 #define rasitop_error_panic -3
 
+static const uint32_t rasitop_request_per_core = 0x1;
+static const uint32_t rasitop_request_sensors = 0x2;
+
 #define rasitop_sensor_capability_cpu_temperature UINT64_C(0x1)
 #define rasitop_sensor_capability_fan_speed UINT64_C(0x2)
 #define rasitop_sensor_capability_system_power UINT64_C(0x4)
@@ -65,6 +68,7 @@ typedef struct {
 
 int32_t rasitop_engine_create(rasitop_engine **out_engine);
 int32_t rasitop_engine_sample(rasitop_engine *engine,
+                              uint32_t request_flags,
                               rasitop_engine_snapshot *out_snapshot);
 int32_t rasitop_engine_destroy(rasitop_engine *engine);
 

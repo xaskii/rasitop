@@ -41,6 +41,22 @@ modes; the remaining polls returned immediately without a new counter delta.
 The snapshot timing includes SMC reads. Its p95 exceeds the provisional 3 ms
 tick budget, which keeps adaptive SMC cadence and hot-path work reduction open.
 
+### Adaptive-request follow-up
+
+After adding explicit per-core and sensor request flags, the same 10-second,
+10 ms release measurements intentionally requested only the CPU mode under
+test. The menu bar app requests per-core counters every second and cached SMC
+values immediately, then every five seconds.
+
+| Mode | Attempt p50 | Attempt p95 | Snapshot p50 | Snapshot p95 | Missed deadlines |
+|---|---:|---:|---:|---:|---:|
+| Aggregate | 14.8 µs | 36.3 µs | 12.0 µs | 45.3 µs | 0 |
+| Per core | 47.1 µs | 143 µs | 69.0 µs | 167 µs | 0 |
+
+The warmed aggregate-only allocation-count test also observed zero Rust heap
+allocations around an emitted snapshot. The machine-readable follow-up results
+are `measure-aggregate-adaptive.json` and `measure-per-core-adaptive.json`.
+
 ## Release app activity
 
 After a five-second warmup, a 30-second Activity Monitor trace reported:
@@ -59,6 +75,5 @@ summary.
 ## Remaining Phase 0 evidence
 
 - Run the 30-minute release capture and controlled-load validation.
-- Prove the warmed aggregate-only path performs zero Rust heap allocations.
 - Record an Allocations trace and verify no growing object graph.
 - Record the packaged sleep/wake behavior separately in Phase 2.

@@ -6,6 +6,42 @@ use crate::cpu::{CpuError, CpuSample, MachCpuProvider, MachPerCoreProvider, PerC
 use crate::smc::{SensorSample, SmcError, SmcProvider};
 
 pub const MAX_LOGICAL_CPUS: usize = 64;
+pub const REQUEST_PER_CORE: u32 = 1 << 0;
+pub const REQUEST_SENSORS: u32 = 1 << 1;
+const REQUEST_MASK: u32 = REQUEST_PER_CORE | REQUEST_SENSORS;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SampleRequest(u32);
+
+impl SampleRequest {
+    pub const NONE: Self = Self(0);
+    pub const PER_CORE: Self = Self(REQUEST_PER_CORE);
+    pub const SENSORS: Self = Self(REQUEST_SENSORS);
+
+    pub const fn from_bits(bits: u32) -> Option<Self> {
+        if bits & !REQUEST_MASK == 0 {
+            Some(Self(bits))
+        } else {
+            None
+        }
+    }
+
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+
+    const fn contains(self, request: Self) -> bool {
+        self.0 & request.0 != 0
+    }
+}
+
+impl std::ops::BitOr for SampleRequest {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
+}
 
 type Result<T> = std::result::Result<T, EngineError>;
 
@@ -146,24 +182,29 @@ impl CpuEngine {
         self.sensor_error.as_ref()
     }
 
-    pub fn sample(&mut self) -> Result<Option<&EngineSnapshot>> {
+    pub fn sample(&mut self, request: SampleRequest) -> Result<Option<&EngineSnapshot>> {
         let sample_started_at = Instant::now();
         let aggregate = self
             .aggregate
             .sample()
             .map_err(EngineError::AggregateSample)?;
-        let per_core_available = match &mut self.per_core {
-            Some(provider) => provider.sample().map_err(EngineError::PerCoreSample)?,
-            None => false,
+        let per_core_available = match (
+            request.contains(SampleRequest::PER_CORE),
+            &mut self.per_core,
+        ) {
+            (true, Some(provider)) => provider.sample().map_err(EngineError::PerCoreSample)?,
+            (_, None) | (false, Some(_)) => false,
         };
 
         let Some(aggregate) = aggregate else {
             return Ok(None);
         };
-        let sensors = self
-            .sensors
-            .as_mut()
-            .map_or(self.sensor_fallback, SmcProvider::sample);
+        if request.contains(SampleRequest::SENSORS) {
+            self.snapshot.sensors = self
+                .sensors
+                .as_mut()
+                .map_or(self.sensor_fallback, SmcProvider::sample);
+        }
 
         let per_core_count = if per_core_available {
             let samples = self
@@ -186,7 +227,6 @@ impl CpuEngine {
         self.snapshot.interval_ns = duration_ns(timing.interval);
         self.snapshot.aggregate = aggregate;
         self.snapshot.per_core_count = per_core_count;
-        self.snapshot.sensors = sensors;
         self.snapshot.sample_duration_ns = duration_ns(sample_started_at.elapsed());
         Ok(Some(&self.snapshot))
     }
@@ -201,7 +241,7 @@ mod tests {
     use std::error::Error as _;
     use std::time::{Duration, Instant};
 
-    use super::{EmissionTimeline, EngineError, duration_ns};
+    use super::{EmissionTimeline, EngineError, SampleRequest, duration_ns};
     use crate::cpu::CpuError;
 
     #[test]
@@ -239,5 +279,35 @@ mod tests {
     fn numeric_duration_saturates_instead_of_wrapping() {
         assert_eq!(duration_ns(Duration::from_nanos(42)), 42);
         assert_eq!(duration_ns(Duration::MAX), u64::MAX);
+    }
+
+    #[test]
+    fn sample_requests_reject_unknown_bits() {
+        assert_eq!(SampleRequest::from_bits(0), Some(SampleRequest::NONE));
+        assert_eq!(
+            SampleRequest::from_bits((SampleRequest::PER_CORE | SampleRequest::SENSORS).bits()),
+            Some(SampleRequest::PER_CORE | SampleRequest::SENSORS)
+        );
+        assert_eq!(SampleRequest::from_bits(1 << 31), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn warmed_aggregate_only_sample_performs_no_rust_heap_allocations() {
+        let mut engine = super::CpuEngine::new(false).expect("initialize aggregate engine");
+        std::thread::sleep(Duration::from_millis(10));
+        engine
+            .sample(SampleRequest::NONE)
+            .expect("warm aggregate engine");
+        std::thread::sleep(Duration::from_millis(10));
+
+        let (sample, allocations) = crate::test_allocator::count_allocations(|| {
+            engine
+                .sample(SampleRequest::NONE)
+                .map(|snapshot| snapshot.is_some())
+        });
+
+        assert!(sample.expect("sample aggregate engine"));
+        assert_eq!(allocations, 0);
     }
 }

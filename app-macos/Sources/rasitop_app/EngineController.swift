@@ -20,6 +20,7 @@ final class EngineController: NSObject {
   private var engine: OpaquePointer?
   private var timer: Timer?
   private var snapshot = rasitop_engine_snapshot()
+  private var sensorTicksRemaining = 0
 
   init(graphView: CPUStatusGraphView) throws {
     self.graphView = graphView
@@ -71,7 +72,19 @@ final class EngineController: NSObject {
       return
     }
 
-    let status = rasitop_engine_sample(engine, &snapshot)
+    var requestFlags = UInt32(rasitop_request_per_core)
+    if sensorTicksRemaining == 0 {
+      requestFlags |= UInt32(rasitop_request_sensors)
+      sensorTicksRemaining = 4
+    } else {
+      sensorTicksRemaining -= 1
+    }
+
+    let status = rasitop_engine_sample(
+      engine,
+      requestFlags,
+      &snapshot
+    )
     switch status {
     case rasitop_sample_ready:
       graphView?.update(from: &snapshot)

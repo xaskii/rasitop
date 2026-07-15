@@ -7,7 +7,7 @@ use chrono::{SecondsFormat, Utc};
 use serde::Serialize;
 
 use crate::cpu::PerCoreSample;
-use crate::engine::{CpuEngine, EngineSnapshot};
+use crate::engine::{CpuEngine, EngineSnapshot, SampleRequest};
 
 const SCHEMA_VERSION: u8 = 1;
 const CSV_HEADER: [&str; 17] = [
@@ -100,7 +100,13 @@ pub fn record<W: Write>(
     })
     .context("install Ctrl-C handler")?;
 
-    let mut engine = CpuEngine::new(per_core_writer.is_some()).context("initialize CPU engine")?;
+    let sample_per_core = per_core_writer.is_some();
+    let request = if sample_per_core {
+        SampleRequest::PER_CORE | SampleRequest::SENSORS
+    } else {
+        SampleRequest::SENSORS
+    };
+    let mut engine = CpuEngine::new(sample_per_core).context("initialize CPU engine")?;
     if let Some(error) = engine.sensor_error() {
         eprintln!(
             "rasitop: SMC unavailable (error_flags={:#018x}): {error}",
@@ -129,7 +135,7 @@ pub fn record<W: Write>(
             Err(RecvTimeoutError::Timeout) => {}
         }
 
-        if let Some(snapshot) = engine.sample().context("sample CPU engine")? {
+        if let Some(snapshot) = engine.sample(request).context("sample CPU engine")? {
             samples_written += 1;
             let timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
             write_sample(&mut csv, &timestamp, snapshot)?;

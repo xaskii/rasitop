@@ -1,6 +1,6 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use crate::engine::{CpuEngine, EngineSnapshot};
+use crate::engine::{CpuEngine, EngineSnapshot, SampleRequest};
 
 pub const STATUS_OK: i32 = 0;
 pub const STATUS_SAMPLE_READY: i32 = 1;
@@ -40,7 +40,10 @@ pub unsafe extern "C" fn rasitop_engine_create(out_engine: *mut *mut EngineHandl
     }
 }
 
-/// Samples the engine into caller-owned fixed-layout storage.
+/// Samples the engine into caller-owned fixed-layout storage. Aggregate CPU is
+/// always sampled; `request_flags` controls the optional per-core and sensor
+/// reads. Fields that are not requested retain their cached values, except that
+/// `per_core_count` is zero when per-core sampling was not requested.
 ///
 /// Returns [`STATUS_SAMPLE_READY`] when `out_snapshot` was updated,
 /// [`STATUS_OK`] when counters did not advance, or a negative error code.
@@ -53,15 +56,19 @@ pub unsafe extern "C" fn rasitop_engine_create(out_engine: *mut *mut EngineHandl
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rasitop_engine_sample(
     engine: *mut EngineHandle,
+    request_flags: u32,
     out_snapshot: *mut EngineSnapshot,
 ) -> i32 {
     if engine.is_null() || out_snapshot.is_null() {
         return STATUS_ERROR_INVALID_ARGUMENT;
     }
+    let Some(request) = SampleRequest::from_bits(request_flags) else {
+        return STATUS_ERROR_INVALID_ARGUMENT;
+    };
 
     match catch_unwind(AssertUnwindSafe(|| {
         let engine = unsafe { &mut *engine };
-        engine.0.sample()
+        engine.0.sample(request)
     })) {
         Ok(Ok(Some(snapshot))) => {
             unsafe {
@@ -136,7 +143,7 @@ mod tests {
             STATUS_ERROR_INVALID_ARGUMENT
         );
         assert_eq!(
-            unsafe { rasitop_engine_sample(std::ptr::null_mut(), std::ptr::null_mut()) },
+            unsafe { rasitop_engine_sample(std::ptr::null_mut(), 0, std::ptr::null_mut()) },
             STATUS_ERROR_INVALID_ARGUMENT
         );
         assert_eq!(

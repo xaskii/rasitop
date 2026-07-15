@@ -5,3 +5,6 @@ pub mod ffi;
 pub mod measure;
 pub mod record;
 pub mod smc;
+
+#[cfg(all(test, target_os = "macos"))]
+mod test_allocator;

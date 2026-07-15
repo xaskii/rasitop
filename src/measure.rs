@@ -5,7 +5,7 @@ use anyhow::{Context, Result, ensure};
 use clap::ValueEnum;
 use serde::Serialize;
 
-use crate::engine::CpuEngine;
+use crate::engine::{CpuEngine, SampleRequest};
 
 const SCHEMA_VERSION: u8 = 1;
 
@@ -19,6 +19,13 @@ pub enum MeasureMode {
 impl MeasureMode {
     fn samples_per_core(self) -> bool {
         matches!(self, Self::PerCore)
+    }
+
+    fn request(self) -> SampleRequest {
+        match self {
+            Self::Aggregate => SampleRequest::NONE,
+            Self::PerCore => SampleRequest::PER_CORE,
+        }
     }
 }
 
@@ -94,7 +101,7 @@ pub fn measure(options: MeasureOptions) -> Result<MeasurementSummary> {
 
         let attempt_started_at = Instant::now();
         let snapshot_duration = engine
-            .sample()
+            .sample(options.mode.request())
             .context("measure CPU engine sample")?
             .map(|snapshot| snapshot.sample_duration_ns);
         let attempt_duration = duration_ns(attempt_started_at.elapsed());
