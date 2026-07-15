@@ -17,17 +17,12 @@ writeShellApplication {
     fi
 
     repo_root="$PWD"
-    template="''${INSTRUMENTS_TEMPLATE:-CPU Profiler}"
     timestamp="$(date +%Y%m%d-%H%M%S)"
-    output="''${INSTRUMENTS_OUTPUT:-$repo_root/target/profiling/rasitop-cpu-$timestamp.trace}"
+    output_dir="''${INSTRUMENTS_OUTPUT_DIR:-$repo_root/target/profiling}"
 
     # Instruments is provided by Xcode, while Rust and cargo-instruments come
     # from this Nix closure.
     export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
-
-    if (( $# == 0 )); then
-      set -- record --interval 1ms --duration 10s
-    fi
 
     rust_src="$(rustc --print sysroot)/lib/rustlib/src/rust/library/std/Cargo.toml"
     if [[ ! -f "$rust_src" ]]; then
@@ -35,28 +30,81 @@ writeShellApplication {
       exit 1
     fi
 
-    cargo_instruments_args=(
-      --profile profiling
-      --bin rasitop
-      --template "$template"
-      --output "$output"
-    )
-    if [[ "''${INSTRUMENTS_NO_OPEN:-0}" == 1 ]]; then
-      cargo_instruments_args+=(--no-open)
+    profile_target() {
+      local bin="$1"
+      local template="$2"
+      local output="$3"
+      shift 3
+
+      local cargo_instruments_args=(
+        --profile profiling
+        --bin "$bin"
+        --template "$template"
+        --output "$output"
+      )
+      if [[ -n "''${time_limit_millis:-}" ]]; then
+        cargo_instruments_args+=(--time-limit "$time_limit_millis")
+      fi
+      if [[ "''${INSTRUMENTS_NO_OPEN:-0}" == 1 ]]; then
+        cargo_instruments_args+=(--no-open)
+      fi
+
+      mkdir -p "$(dirname "$output")"
+
+      RUSTC_BOOTSTRAP=1 \
+        CARGO_UNSTABLE_BUILD_STD=std \
+        RUSTFLAGS="''${RUSTFLAGS:+$RUSTFLAGS }-C force-frame-pointers=yes" \
+        cargo instruments \
+          "''${cargo_instruments_args[@]}" \
+          -- "$@"
+
+      echo "trace: $output"
+      if [[ "''${INSTRUMENTS_NO_OPEN:-0}" == 1 ]]; then
+        echo "open with: open '$output'"
+      fi
+    }
+
+    if [[ "''${1:-}" == app ]]; then
+      mode="''${2:-all}"
+      duration_seconds="''${3:-60}"
+      if (( $# > 3 )) || [[ ! "$duration_seconds" =~ ^[1-9][0-9]*$ ]]; then
+        echo "usage: nix run .#profile -- app [cpu|allocations|all] [seconds]" >&2
+        exit 2
+      fi
+      time_limit_millis="$((duration_seconds * 1000))"
+
+      case "$mode" in
+        cpu)
+          output="''${INSTRUMENTS_OUTPUT:-$output_dir/rasitop-app-cpu-$timestamp.trace}"
+          profile_target rasitop-app "CPU Profiler" "$output"
+          ;;
+        allocations)
+          output="''${INSTRUMENTS_OUTPUT:-$output_dir/rasitop-app-allocations-$timestamp.trace}"
+          profile_target rasitop-app Allocations "$output"
+          ;;
+        all)
+          profile_target \
+            rasitop-app \
+            "CPU Profiler" \
+            "$output_dir/rasitop-app-cpu-$timestamp.trace"
+          profile_target \
+            rasitop-app \
+            Allocations \
+            "$output_dir/rasitop-app-allocations-$timestamp.trace"
+          ;;
+        *)
+          echo "usage: nix run .#profile -- app [cpu|allocations|all] [seconds]" >&2
+          exit 2
+          ;;
+      esac
+      exit 0
     fi
 
-    mkdir -p "$(dirname "$output")"
-
-    RUSTC_BOOTSTRAP=1 \
-      CARGO_UNSTABLE_BUILD_STD=std \
-      RUSTFLAGS="''${RUSTFLAGS:+$RUSTFLAGS }-C force-frame-pointers=yes" \
-      cargo instruments \
-        "''${cargo_instruments_args[@]}" \
-        -- "$@"
-
-    echo "trace: $output"
-    if [[ "''${INSTRUMENTS_NO_OPEN:-0}" == 1 ]]; then
-      echo "open with: open '$output'"
+    if (( $# == 0 )); then
+      set -- record --interval 1ms --duration 10s
     fi
+    template="''${INSTRUMENTS_TEMPLATE:-CPU Profiler}"
+    output="''${INSTRUMENTS_OUTPUT:-$output_dir/rasitop-cpu-$timestamp.trace}"
+    profile_target rasitop "$template" "$output" "$@"
   '';
 }

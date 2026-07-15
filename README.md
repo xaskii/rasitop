@@ -65,3 +65,17 @@ cargo-instruments, compiles `std` and rasitop from source with full debug info
 and frame pointers, records a CPU Profiler trace, and opens it in Instruments.
 Builds are incremental after the first run. Set `INSTRUMENTS_NO_OPEN=1` to
 leave the trace unopened or `INSTRUMENTS_OUTPUT` to choose its path.
+
+Profile the actual menu bar app for one minute with separate CPU and allocation
+traces:
+
+```sh
+nix run .#profile -- app cpu
+nix run .#profile -- app allocations
+
+# Or record both sequentially. The optional final argument is seconds.
+nix run .#profile -- app all 60
+```
+
+CPU and allocation recording use separate runs so allocation instrumentation
+does not distort the CPU baseline.
