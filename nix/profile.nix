@@ -294,8 +294,58 @@ writeShellApplication {
       exit 0
     fi
 
+    if [[ "''${1:-}" == stress ]]; then
+      mode="''${2:-per-core}"
+      duration_seconds="''${3:-10}"
+      interval="''${4:-1ms}"
+      watchdog_grace_seconds="''${INSTRUMENTS_WATCHDOG_GRACE_SECONDS:-10}"
+      if (( $# > 4 )) \
+        || [[ ! "$duration_seconds" =~ ^[1-9][0-9]*$ ]] \
+        || [[ ! "$watchdog_grace_seconds" =~ ^[0-9]+$ ]]; then
+        echo "usage: nix run .#profile -- stress [aggregate|per-core] [seconds] [interval]" >&2
+        exit 2
+      fi
+      case "$mode" in
+        aggregate | per-core) ;;
+        *)
+          echo "usage: nix run .#profile -- stress [aggregate|per-core] [seconds] [interval]" >&2
+          exit 2
+          ;;
+      esac
+      output="''${INSTRUMENTS_OUTPUT:-$output_dir/rasitop-engine-$mode-stress-$timestamp.trace}"
+      summary="''${INSTRUMENTS_SUMMARY_OUTPUT:-$output_dir/rasitop-engine-$mode-stress-$timestamp.json}"
+      mkdir -p "$(dirname "$summary")"
+      if [[ -e "$summary" ]]; then
+        echo "refusing to overwrite existing stress summary: $summary" >&2
+        exit 1
+      fi
+      time_limit_millis="$((
+        (duration_seconds + watchdog_grace_seconds) * 1000
+      ))"
+      profile_target \
+        rasitop \
+        "CPU Profiler" \
+        "$output" \
+        "$time_limit_millis" \
+        measure \
+        --mode "$mode" \
+        --interval "$interval" \
+        --duration "''${duration_seconds}s" \
+        --output "$summary"
+      if [[ ! -s "$summary" ]]; then
+        echo "stress measurement did not produce a summary at $summary" >&2
+        exit 1
+      fi
+      echo "summary: $summary"
+      cat "$summary"
+      exit 0
+    fi
+
     if (( $# == 0 )); then
-      set -- record --interval 1ms --duration 10s
+      echo "usage: nix run .#profile -- app [cpu|allocations|activity|all] [seconds]" >&2
+      echo "       nix run .#profile -- stress [aggregate|per-core] [seconds] [interval]" >&2
+      echo "       nix run .#profile -- <rasitop arguments>" >&2
+      exit 2
     fi
     template="''${INSTRUMENTS_TEMPLATE:-CPU Profiler}"
     output="''${INSTRUMENTS_OUTPUT:-$output_dir/rasitop-cpu-$timestamp.trace}"

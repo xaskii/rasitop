@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
+use rasitop::measure::{self, MeasureMode, MeasureOptions};
 use rasitop::record::{self, RecordOptions};
 
 #[derive(Debug, Parser)]
@@ -18,8 +19,30 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Measure the CPU engine without timestamp or CSV overhead.
+    Measure(MeasureArgs),
+
     /// Record aggregate CPU utilization as CSV.
     Record(RecordArgs),
+}
+
+#[derive(Debug, Args)]
+struct MeasureArgs {
+    /// Engine path to measure.
+    #[arg(long, value_enum, default_value_t = MeasureMode::PerCore)]
+    mode: MeasureMode,
+
+    /// Sampling interval, such as 1ms, 250ms, or 1s.
+    #[arg(long, default_value = "1s", value_parser = humantime::parse_duration)]
+    interval: Duration,
+
+    /// Total measurement duration, such as 10s or 1m.
+    #[arg(long, default_value = "10s", value_parser = humantime::parse_duration)]
+    duration: Duration,
+
+    /// Write the JSON summary to this path instead of stdout.
+    #[arg(long, value_name = "PATH")]
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -59,6 +82,27 @@ fn run() -> Result<()> {
     );
 
     match cli.command {
+        Command::Measure(args) => {
+            let summary = measure::measure(MeasureOptions {
+                mode: args.mode,
+                interval: args.interval,
+                duration: args.duration,
+            })
+            .context("measure CPU engine")?;
+            let writer: Box<dyn Write> = match args.output {
+                Some(path) => {
+                    let file = File::create(&path)
+                        .with_context(|| format!("create summary at {}", path.display()))?;
+                    Box::new(file)
+                }
+                None => Box::new(io::stdout()),
+            };
+            let mut writer = BufWriter::new(writer);
+            serde_json::to_writer(&mut writer, &summary).context("write measurement summary")?;
+            writer
+                .write_all(b"\n")
+                .context("finish measurement summary")
+        }
         Command::Record(args) => {
             let stdout = io::stdout();
             let writer = BufWriter::new(stdout.lock());
