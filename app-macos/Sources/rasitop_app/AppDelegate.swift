@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let statusItemWidth = 80.0
   private var statusItem: NSStatusItem?
   private var engineController: EngineController?
+  private var profilingTerminationTimer: Timer?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
@@ -55,11 +56,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     } catch {
       NSLog("rasitop startup failed: %@", String(describing: error))
     }
+
+    scheduleProfilingTerminationIfRequested()
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    profilingTerminationTimer?.invalidate()
+    profilingTerminationTimer = nil
     engineController?.stop()
     engineController = nil
     statusItem = nil
+  }
+
+  private func scheduleProfilingTerminationIfRequested() {
+    let argument = "--profile-duration-seconds"
+    let arguments = CommandLine.arguments
+    guard let argumentIndex = arguments.firstIndex(of: argument) else {
+      return
+    }
+
+    let valueIndex = arguments.index(after: argumentIndex)
+    guard
+      valueIndex < arguments.endIndex,
+      let duration = TimeInterval(arguments[valueIndex]),
+      duration > 0
+    else {
+      NSLog("rasitop requires a positive number after %@", argument)
+      NSApp.terminate(nil)
+      return
+    }
+
+    let timer = Timer(
+      timeInterval: duration,
+      target: self,
+      selector: #selector(finishTimedProfile),
+      userInfo: nil,
+      repeats: false
+    )
+    RunLoop.main.add(timer, forMode: .common)
+    profilingTerminationTimer = timer
+  }
+
+  @objc
+  private func finishTimedProfile() {
+    NSApp.terminate(nil)
   }
 }

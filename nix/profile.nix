@@ -42,9 +42,6 @@ writeShellApplication {
         --template "$template"
         --output "$output"
       )
-      if [[ -n "''${time_limit_millis:-}" ]]; then
-        cargo_instruments_args+=(--time-limit "$time_limit_millis")
-      fi
       if [[ "''${INSTRUMENTS_NO_OPEN:-0}" == 1 ]]; then
         cargo_instruments_args+=(--no-open)
       fi
@@ -71,26 +68,34 @@ writeShellApplication {
         echo "usage: nix run .#profile -- app [cpu|allocations|all] [seconds]" >&2
         exit 2
       fi
-      time_limit_millis="$((duration_seconds * 1000))"
-
       case "$mode" in
         cpu)
           output="''${INSTRUMENTS_OUTPUT:-$output_dir/rasitop-app-cpu-$timestamp.trace}"
-          profile_target rasitop-app "CPU Profiler" "$output"
+          profile_target \
+            rasitop-app \
+            "CPU Profiler" \
+            "$output" \
+            --profile-duration-seconds "$duration_seconds"
           ;;
         allocations)
           output="''${INSTRUMENTS_OUTPUT:-$output_dir/rasitop-app-allocations-$timestamp.trace}"
-          profile_target rasitop-app Allocations "$output"
+          profile_target \
+            rasitop-app \
+            Allocations \
+            "$output" \
+            --profile-duration-seconds "$duration_seconds"
           ;;
         all)
           profile_target \
             rasitop-app \
             "CPU Profiler" \
-            "$output_dir/rasitop-app-cpu-$timestamp.trace"
+            "$output_dir/rasitop-app-cpu-$timestamp.trace" \
+            --profile-duration-seconds "$duration_seconds"
           profile_target \
             rasitop-app \
             Allocations \
-            "$output_dir/rasitop-app-allocations-$timestamp.trace"
+            "$output_dir/rasitop-app-allocations-$timestamp.trace" \
+            --profile-duration-seconds "$duration_seconds"
           ;;
         *)
           echo "usage: nix run .#profile -- app [cpu|allocations|all] [seconds]" >&2
