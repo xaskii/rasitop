@@ -6,6 +6,41 @@ use crate::cpu::{CpuSample, MachCpuProvider, MachPerCoreProvider, PerCoreSample}
 
 pub const MAX_LOGICAL_CPUS: usize = 64;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EmissionTiming {
+    sequence: u64,
+    monotonic: Duration,
+    interval: Duration,
+}
+
+#[derive(Debug)]
+struct EmissionTimeline {
+    started_at: Instant,
+    previous_emitted_at: Instant,
+    sequence: u64,
+}
+
+impl EmissionTimeline {
+    fn new(started_at: Instant) -> Self {
+        Self {
+            started_at,
+            previous_emitted_at: started_at,
+            sequence: 0,
+        }
+    }
+
+    fn record_emission(&mut self, emitted_at: Instant) -> EmissionTiming {
+        self.sequence += 1;
+        let timing = EmissionTiming {
+            sequence: self.sequence,
+            monotonic: emitted_at.duration_since(self.started_at),
+            interval: emitted_at.duration_since(self.previous_emitted_at),
+        };
+        self.previous_emitted_at = emitted_at;
+        timing
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct EngineSnapshot {
@@ -43,9 +78,7 @@ impl EngineSnapshot {
 pub struct CpuEngine {
     aggregate: MachCpuProvider,
     per_core: Option<MachPerCoreProvider>,
-    started_at: Instant,
-    previous_sample_at: Instant,
-    sequence: u64,
+    emissions: EmissionTimeline,
     snapshot: EngineSnapshot,
 }
 
@@ -70,16 +103,13 @@ impl CpuEngine {
         Ok(Self {
             aggregate,
             per_core,
-            started_at,
-            previous_sample_at: started_at,
-            sequence: 0,
+            emissions: EmissionTimeline::new(started_at),
             snapshot: EngineSnapshot::default(),
         })
     }
 
     pub fn sample(&mut self) -> Result<Option<&EngineSnapshot>> {
         let sample_started_at = Instant::now();
-        let interval = sample_started_at.duration_since(self.previous_sample_at);
         let aggregate = self
             .aggregate
             .sample()
@@ -90,8 +120,6 @@ impl CpuEngine {
                 .context("sample per-core CPU utilization")?,
             None => false,
         };
-        let sample_duration = sample_started_at.elapsed();
-        self.previous_sample_at = sample_started_at;
 
         let Some(aggregate) = aggregate else {
             return Ok(None);
@@ -113,13 +141,13 @@ impl CpuEngine {
             0
         };
 
-        self.sequence += 1;
-        self.snapshot.sequence = self.sequence;
-        self.snapshot.monotonic_ns = duration_ns(sample_started_at.duration_since(self.started_at));
-        self.snapshot.interval_ns = duration_ns(interval);
-        self.snapshot.sample_duration_ns = duration_ns(sample_duration);
+        let timing = self.emissions.record_emission(sample_started_at);
+        self.snapshot.sequence = timing.sequence;
+        self.snapshot.monotonic_ns = duration_ns(timing.monotonic);
+        self.snapshot.interval_ns = duration_ns(timing.interval);
         self.snapshot.aggregate = aggregate;
         self.snapshot.per_core_count = per_core_count;
+        self.snapshot.sample_duration_ns = duration_ns(sample_started_at.elapsed());
         Ok(Some(&self.snapshot))
     }
 }
@@ -130,8 +158,26 @@ fn duration_ns(duration: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::duration_ns;
-    use std::time::Duration;
+    use super::{EmissionTimeline, duration_ns};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn intervals_span_only_emitted_snapshots() {
+        let started_at = Instant::now();
+        let mut timeline = EmissionTimeline::new(started_at);
+
+        let first = timeline.record_emission(started_at + Duration::from_millis(100));
+        assert_eq!(first.sequence, 1);
+        assert_eq!(first.monotonic, Duration::from_millis(100));
+        assert_eq!(first.interval, Duration::from_millis(100));
+
+        // A poll at 200 ms that produces no snapshot never reaches
+        // `record_emission`, so it cannot shorten the following interval.
+        let second = timeline.record_emission(started_at + Duration::from_millis(1_100));
+        assert_eq!(second.sequence, 2);
+        assert_eq!(second.monotonic, Duration::from_millis(1_100));
+        assert_eq!(second.interval, Duration::from_secs(1));
+    }
 
     #[test]
     fn numeric_duration_saturates_instead_of_wrapping() {
