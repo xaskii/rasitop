@@ -139,11 +139,7 @@ impl Reader {
             }
         }
 
-        Reading {
-            maximum: (count != 0).then_some(maximum),
-            average: (count != 0).then_some(sum / f64::from(count)),
-            error_flags,
-        }
+        Reading::from_accumulator(maximum, sum, count, error_flags)
     }
 }
 
@@ -152,6 +148,19 @@ struct Reading {
     maximum: Option<f64>,
     average: Option<f64>,
     error_flags: u64,
+}
+
+impl Reading {
+    fn from_accumulator(maximum: f64, sum: f64, count: u32, error_flags: u64) -> Self {
+        Self {
+            maximum: (count != 0).then_some(maximum),
+            average: (count != 0).then_some(sum / f64::from(count)),
+            // A role-level sample succeeded when at least one resolved key
+            // produced a usable value. Individual dormant keys may
+            // legitimately become unavailable as cores power-gate.
+            error_flags: if count == 0 { error_flags } else { 0 },
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -237,8 +246,8 @@ fn fan_candidates(connection: &SmcConnection) -> Vec<SmcKey> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CAPABILITY_CPU_TEMPERATURE, CAPABILITY_FAN_SPEED, ERROR_SMC_ACCESS,
-        ERROR_SMC_INITIALIZATION, SensorSample, SmcError, available,
+        CAPABILITY_CPU_TEMPERATURE, CAPABILITY_FAN_SPEED, ERROR_SMC_ACCESS, ERROR_SMC_DATA,
+        ERROR_SMC_INITIALIZATION, Reading, SensorSample, SmcError, available,
     };
 
     #[test]
@@ -267,5 +276,16 @@ mod tests {
         assert_eq!(sample.fan_rpm(), Some(0.0));
         assert_eq!(sample.system_power_w(), None);
         assert_eq!(available(f64::INFINITY, u64::MAX, 1), None);
+    }
+
+    #[test]
+    fn role_errors_require_every_resolved_key_to_fail() {
+        let partial = Reading::from_accumulator(62.0, 62.0, 1, ERROR_SMC_DATA);
+        assert_eq!(partial.maximum, Some(62.0));
+        assert_eq!(partial.error_flags, 0);
+
+        let unavailable = Reading::from_accumulator(f64::NEG_INFINITY, 0.0, 0, ERROR_SMC_DATA);
+        assert_eq!(unavailable.maximum, None);
+        assert_eq!(unavailable.error_flags, ERROR_SMC_DATA);
     }
 }
