@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var engineController: EngineController?
   private var popoverController: PopoverController?
   private var profilingTerminationTimer: Timer?
+  private var statusItemEventMonitor: Any?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
@@ -22,8 +23,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     button.title = ""
     button.setAccessibilityLabel("CPU utilization per logical core")
-    button.target = self
-    button.action = #selector(togglePopover(_:))
 
     let graphSize = CPUStatusGraphView.graphSize
     let graphFrame = NSRect(
@@ -44,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let popoverController = PopoverController()
     self.popoverController = popoverController
     statusItem = item
+    installStatusItemClickMonitor(for: button)
 
     do {
       let controller = try EngineController(
@@ -71,6 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     NSWorkspace.shared.notificationCenter.removeObserver(self)
     profilingTerminationTimer?.invalidate()
     profilingTerminationTimer = nil
+    if let statusItemEventMonitor {
+      NSEvent.removeMonitor(statusItemEventMonitor)
+      self.statusItemEventMonitor = nil
+    }
     engineController?.stop()
     engineController = nil
     popoverController?.close()
@@ -78,9 +82,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     statusItem = nil
   }
 
-  @objc
   private func togglePopover(_ sender: NSStatusBarButton) {
     popoverController?.toggle(relativeTo: sender)
+  }
+
+  private func installStatusItemClickMonitor(for button: NSStatusBarButton) {
+    statusItemEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) {
+      [weak self, weak button] event in
+      guard
+        let self,
+        let button,
+        event.window === button.window,
+        button.bounds.contains(button.convert(event.locationInWindow, from: nil))
+      else {
+        return event
+      }
+
+      togglePopover(button)
+      return nil
+    }
   }
 
   private func observeSystemSleepAndWake() {

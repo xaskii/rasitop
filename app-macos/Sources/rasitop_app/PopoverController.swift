@@ -9,12 +9,14 @@ private struct SensorDisplaySnapshot {
 }
 
 @MainActor
-final class PopoverController: NSObject, NSPopoverDelegate {
+final class PopoverController: NSObject {
   var visibilityDidChange: ((Bool) -> Void)?
 
   private weak var anchorButton: NSStatusBarButton?
-  private var popover: NSPopover?
+  private var panel: StatusPanel?
   private var summaryView: SensorSummaryView?
+  private var localEventMonitor: Any?
+  private var globalEventMonitor: Any?
   private var latestSnapshot = SensorDisplaySnapshot()
   private var historyPoints = Array(
     repeating: rasitop_history_point(),
@@ -23,7 +25,7 @@ final class PopoverController: NSObject, NSPopoverDelegate {
   private var historyCount = 0
 
   var isShown: Bool {
-    popover?.isShown == true
+    panel?.isVisible == true
   }
 
   func toggle(relativeTo button: NSStatusBarButton) {
@@ -35,7 +37,13 @@ final class PopoverController: NSObject, NSPopoverDelegate {
   }
 
   func close() {
-    popover?.performClose(nil)
+    let wasShown = isShown
+    stopEventMonitoring()
+    panel?.orderOut(nil)
+    anchorButton = nil
+    if wasShown {
+      visibilityDidChange?(false)
+    }
   }
 
   func update(
@@ -60,45 +68,60 @@ final class PopoverController: NSObject, NSPopoverDelegate {
     }
   }
 
-  func popoverDidClose(_ notification: Notification) {
-    anchorButton?.highlight(false)
-    anchorButton = nil
-    visibilityDidChange?(false)
-  }
-
   private func show(relativeTo button: NSStatusBarButton) {
-    let popover = self.popover ?? makePopover()
-    updateVisibleContent()
+    let panel = self.panel ?? makePanel()
     anchorButton = button
-    button.highlight(true)
-    popover.show(
-      relativeTo: button.bounds,
-      of: button,
-      preferredEdge: .minY
-    )
+    updateVisibleContent()
+    position(panel, relativeTo: button)
+    panel.makeKeyAndOrderFront(nil)
+    startEventMonitoring()
     visibilityDidChange?(true)
   }
 
-  private func makePopover() -> NSPopover {
+  private func makePanel() -> StatusPanel {
     let summaryView = SensorSummaryView()
+    summaryView.translatesAutoresizingMaskIntoConstraints = false
     self.summaryView = summaryView
 
-    let viewController = NSViewController()
-    viewController.view = summaryView
+    let backgroundView = NSVisualEffectView()
+    backgroundView.material = .popover
+    backgroundView.blendingMode = .behindWindow
+    backgroundView.state = .active
+    backgroundView.wantsLayer = true
+    backgroundView.layer?.cornerRadius = 12
+    backgroundView.layer?.masksToBounds = true
+    backgroundView.addSubview(summaryView)
 
-    let popover = NSPopover()
-    popover.behavior = .transient
-    popover.animates = false
-    popover.delegate = self
-    popover.contentViewController = viewController
-    self.popover = popover
+    NSLayoutConstraint.activate([
+      summaryView.topAnchor.constraint(equalTo: backgroundView.topAnchor),
+      summaryView.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor),
+      summaryView.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor),
+      summaryView.bottomAnchor.constraint(equalTo: backgroundView.bottomAnchor),
+    ])
+
+    let panel = StatusPanel(
+      contentRect: .zero,
+      styleMask: [.borderless, .nonactivatingPanel],
+      backing: .buffered,
+      defer: false
+    )
+    panel.animationBehavior = .none
+    panel.backgroundColor = .clear
+    panel.isOpaque = false
+    panel.hasShadow = true
+    panel.isFloatingPanel = true
+    panel.hidesOnDeactivate = false
+    panel.level = .popUpMenu
+    panel.collectionBehavior = [.transient, .fullScreenAuxiliary]
+    panel.contentView = backgroundView
+    self.panel = panel
 
     updateVisibleContent()
-    return popover
+    return panel
   }
 
   private func updateVisibleContent() {
-    guard let summaryView, let popover else {
+    guard let summaryView, let panel else {
       return
     }
 
@@ -115,7 +138,82 @@ final class PopoverController: NSObject, NSPopoverDelegate {
       width: SensorSummaryView.width,
       height: summaryView.preferredHeight
     )
-    popover.contentSize = contentSize
+    panel.setContentSize(contentSize)
+    if let anchorButton, isShown {
+      position(panel, relativeTo: anchorButton)
+    }
+  }
+
+  private func position(_ panel: NSPanel, relativeTo button: NSStatusBarButton) {
+    guard let buttonWindow = button.window else {
+      return
+    }
+
+    let anchorFrame = buttonWindow.convertToScreen(
+      button.convert(button.bounds, to: nil)
+    )
+    let screenFrame = (buttonWindow.screen ?? NSScreen.main)?.visibleFrame ?? anchorFrame
+    let margin = 8.0
+    let gap = 6.0
+    let size = panel.frame.size
+    let centeredX = anchorFrame.midX - size.width / 2
+    let origin = NSPoint(
+      x: min(
+        max(centeredX, screenFrame.minX + margin),
+        screenFrame.maxX - size.width - margin
+      ),
+      y: max(anchorFrame.minY - gap - size.height, screenFrame.minY + margin)
+    )
+    panel.setFrameOrigin(origin)
+  }
+
+  private func startEventMonitoring() {
+    stopEventMonitoring()
+    let mouseEvents: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
+
+    localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+      [weak self] event in
+      guard event.keyCode == 53 else {
+        return event
+      }
+      self?.close()
+      return nil
+    }
+
+    globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseEvents) {
+      [weak self] _ in
+      let mouseLocation = NSEvent.mouseLocation
+      Task { @MainActor in
+        self?.closeUnlessClickInAnchor(at: mouseLocation)
+      }
+    }
+  }
+
+  private func closeUnlessClickInAnchor(at screenLocation: NSPoint) {
+    guard
+      let anchorButton,
+      let buttonWindow = anchorButton.window
+    else {
+      close()
+      return
+    }
+    let anchorFrame = buttonWindow.convertToScreen(
+      anchorButton.convert(anchorButton.bounds, to: nil)
+    )
+    if !anchorFrame.contains(screenLocation) {
+      close()
+    }
+  }
+
+  private func stopEventMonitoring() {
+    if let localEventMonitor {
+      NSEvent.removeMonitor(localEventMonitor)
+      self.localEventMonitor = nil
+    }
+    if let globalEventMonitor {
+      NSEvent.removeMonitor(globalEventMonitor)
+      self.globalEventMonitor = nil
+    }
   }
 
   private func finite(_ value: Double) -> Double? {
@@ -124,6 +222,13 @@ final class PopoverController: NSObject, NSPopoverDelegate {
 
   private func clamped(_ ratio: Double) -> Double {
     min(max(ratio, 0), 1)
+  }
+}
+
+@MainActor
+private final class StatusPanel: NSPanel {
+  override var canBecomeKey: Bool {
+    true
   }
 }
 
