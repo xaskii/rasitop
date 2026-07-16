@@ -66,6 +66,23 @@ final class EngineController: NSObject {
     timer = nil
   }
 
+  func prepareForSystemSleep() {
+    stop()
+  }
+
+  func resumeAfterSystemWake() {
+    guard let engine else {
+      return
+    }
+
+    let status = rasitop_engine_reset_cpu_baselines(engine)
+    if status != rasitop_ok {
+      NSLog("rasitop CPU baseline reset failed with status %d", status)
+    }
+    sensorTicksRemaining = 0
+    start()
+  }
+
   @objc
   private func sample() {
     guard let engine else {

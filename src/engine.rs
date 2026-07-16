@@ -93,6 +93,10 @@ impl EmissionTimeline {
         self.previous_emitted_at = emitted_at;
         timing
     }
+
+    fn reset_interval(&mut self, reset_at: Instant) {
+        self.previous_emitted_at = reset_at;
+    }
 }
 
 #[repr(C)]
@@ -180,6 +184,28 @@ impl CpuEngine {
     /// engine is operating in CPU-only mode.
     pub fn sensor_error(&self) -> Option<&SmcError> {
         self.sensor_error.as_ref()
+    }
+
+    /// Re-establishes CPU counter baselines without rebuilding the engine.
+    ///
+    /// This keeps the cached SMC connection intact across system sleep while
+    /// ensuring the first post-wake utilization sample covers only awake time.
+    pub fn reset_cpu_baselines(&mut self) -> Result<()> {
+        let aggregate = self
+            .aggregate
+            .reset()
+            .map_err(EngineError::AggregateBaseline);
+        let per_core = self
+            .per_core
+            .as_mut()
+            .map(MachPerCoreProvider::reset)
+            .transpose()
+            .map_err(EngineError::PerCoreBaseline);
+
+        self.emissions.reset_interval(Instant::now());
+        aggregate?;
+        per_core?;
+        Ok(())
     }
 
     pub fn sample(&mut self, request: SampleRequest) -> Result<Option<&EngineSnapshot>> {
@@ -273,6 +299,20 @@ mod tests {
         assert_eq!(second.sequence, 2);
         assert_eq!(second.monotonic, Duration::from_millis(1_100));
         assert_eq!(second.interval, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn resetting_timeline_excludes_a_wake_gap_from_the_next_interval() {
+        let started_at = Instant::now();
+        let mut timeline = EmissionTimeline::new(started_at);
+
+        timeline.record_emission(started_at + Duration::from_secs(1));
+        timeline.reset_interval(started_at + Duration::from_secs(60));
+        let after_wake = timeline.record_emission(started_at + Duration::from_secs(61));
+
+        assert_eq!(after_wake.sequence, 2);
+        assert_eq!(after_wake.monotonic, Duration::from_secs(61));
+        assert_eq!(after_wake.interval, Duration::from_secs(1));
     }
 
     #[test]

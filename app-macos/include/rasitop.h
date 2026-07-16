@@ -70,6 +70,7 @@ int32_t rasitop_engine_create(rasitop_engine **out_engine);
 int32_t rasitop_engine_sample(rasitop_engine *engine,
                               uint32_t request_flags,
                               rasitop_engine_snapshot *out_snapshot);
+int32_t rasitop_engine_reset_cpu_baselines(rasitop_engine *engine);
 int32_t rasitop_engine_destroy(rasitop_engine *engine);
 
 static inline const rasitop_per_core_sample *

@@ -105,6 +105,12 @@ impl MachCpuProvider {
         let previous = self.previous.replace(current);
         Ok(previous.and_then(|previous| current.deltas_since(previous).ratios()))
     }
+
+    /// Discards the previous counters and establishes a fresh baseline.
+    pub fn reset(&mut self) -> Result<()> {
+        self.previous = None;
+        self.sample().map(|_| ())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -140,6 +146,13 @@ impl MachPerCoreProvider {
 
     pub fn samples(&self) -> &[PerCoreSample] {
         &self.samples
+    }
+
+    /// Discards the previous counters and establishes a fresh baseline.
+    pub fn reset(&mut self) -> Result<()> {
+        self.previous.clear();
+        self.samples.clear();
+        self.sample().map(|_| ())
     }
 }
 

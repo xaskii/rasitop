@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       let controller = try EngineController(graphView: graphView)
       controller.start()
       engineController = controller
+      observeSystemSleepAndWake()
     } catch {
       NSLog("rasitop startup failed: %@", String(describing: error))
     }
@@ -61,11 +62,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    NSWorkspace.shared.notificationCenter.removeObserver(self)
     profilingTerminationTimer?.invalidate()
     profilingTerminationTimer = nil
     engineController?.stop()
     engineController = nil
     statusItem = nil
+  }
+
+  private func observeSystemSleepAndWake() {
+    let center = NSWorkspace.shared.notificationCenter
+    center.addObserver(
+      self,
+      selector: #selector(systemWillSleep),
+      name: NSWorkspace.willSleepNotification,
+      object: nil
+    )
+    center.addObserver(
+      self,
+      selector: #selector(systemDidWake),
+      name: NSWorkspace.didWakeNotification,
+      object: nil
+    )
+  }
+
+  @objc
+  private func systemWillSleep(_ notification: Notification) {
+    engineController?.prepareForSystemSleep()
+  }
+
+  @objc
+  private func systemDidWake(_ notification: Notification) {
+    engineController?.resumeAfterSystemWake()
   }
 
   private func scheduleProfilingTerminationIfRequested() {

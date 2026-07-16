@@ -82,6 +82,28 @@ pub unsafe extern "C" fn rasitop_engine_sample(
     }
 }
 
+/// Re-establishes aggregate and per-core CPU counter baselines after a pause.
+///
+/// # Safety
+///
+/// `engine` must be a live handle returned by [`rasitop_engine_create`] and
+/// accessed by only one thread at a time.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rasitop_engine_reset_cpu_baselines(engine: *mut EngineHandle) -> i32 {
+    if engine.is_null() {
+        return STATUS_ERROR_INVALID_ARGUMENT;
+    }
+
+    match catch_unwind(AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        engine.0.reset_cpu_baselines()
+    })) {
+        Ok(Ok(())) => STATUS_OK,
+        Ok(Err(_)) => STATUS_ERROR_ENGINE,
+        Err(_) => STATUS_ERROR_PANIC,
+    }
+}
+
 /// Destroys an engine returned by [`rasitop_engine_create`]. Passing null is a
 /// successful no-op.
 ///
@@ -109,7 +131,7 @@ mod tests {
 
     use super::{
         STATUS_ERROR_INVALID_ARGUMENT, STATUS_OK, rasitop_engine_create, rasitop_engine_destroy,
-        rasitop_engine_sample,
+        rasitop_engine_reset_cpu_baselines, rasitop_engine_sample,
     };
     use crate::cpu::{CpuSample, PerCoreSample};
     use crate::engine::EngineSnapshot;
@@ -147,8 +169,26 @@ mod tests {
             STATUS_ERROR_INVALID_ARGUMENT
         );
         assert_eq!(
+            unsafe { rasitop_engine_reset_cpu_baselines(std::ptr::null_mut()) },
+            STATUS_ERROR_INVALID_ARGUMENT
+        );
+        assert_eq!(
             unsafe { rasitop_engine_destroy(std::ptr::null_mut()) },
             STATUS_OK
         );
+    }
+
+    #[cfg(all(target_os = "macos", not(miri)))]
+    #[test]
+    fn live_engine_cpu_baselines_can_be_reset() {
+        let mut engine = std::ptr::null_mut();
+
+        assert_eq!(unsafe { rasitop_engine_create(&mut engine) }, STATUS_OK);
+        assert!(!engine.is_null());
+        assert_eq!(
+            unsafe { rasitop_engine_reset_cpu_baselines(engine) },
+            STATUS_OK
+        );
+        assert_eq!(unsafe { rasitop_engine_destroy(engine) }, STATUS_OK);
     }
 }
