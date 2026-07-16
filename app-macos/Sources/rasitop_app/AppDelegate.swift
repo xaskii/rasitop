@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let statusItemWidth = 80.0
   private var statusItem: NSStatusItem?
   private var engineController: EngineController?
+  private var popoverController: PopoverController?
   private var profilingTerminationTimer: Timer?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -21,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     button.title = ""
     button.setAccessibilityLabel("CPU utilization per logical core")
+    button.target = self
+    button.action = #selector(togglePopover(_:))
 
     let graphSize = CPUStatusGraphView.graphSize
     let graphFrame = NSRect(
@@ -38,22 +41,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ]
     button.addSubview(graphView)
 
-    let menu = NSMenu()
-    let quitItem = NSMenuItem(
-      title: "Quit rasitop",
-      action: #selector(NSApplication.terminate(_:)),
-      keyEquivalent: "q"
-    )
-    quitItem.target = NSApp
-    menu.addItem(quitItem)
-    item.menu = menu
+    let popoverController = PopoverController()
+    self.popoverController = popoverController
     statusItem = item
 
     do {
-      let controller = try EngineController(graphView: graphView)
+      let controller = try EngineController(
+        graphView: graphView,
+        popoverController: popoverController
+      )
+      popoverController.visibilityDidChange = { [weak controller] isVisible in
+        controller?.setSensorDetailsVisible(isVisible)
+      }
       controller.start()
       engineController = controller
       observeSystemSleepAndWake()
+      openProfilingPopoverIfRequested(
+        popoverController: popoverController,
+        relativeTo: button
+      )
     } catch {
       NSLog("rasitop startup failed: %@", String(describing: error))
     }
@@ -67,7 +73,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     profilingTerminationTimer = nil
     engineController?.stop()
     engineController = nil
+    popoverController?.close()
+    popoverController = nil
     statusItem = nil
+  }
+
+  @objc
+  private func togglePopover(_ sender: NSStatusBarButton) {
+    popoverController?.toggle(relativeTo: sender)
   }
 
   private func observeSystemSleepAndWake() {
@@ -123,6 +136,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     RunLoop.main.add(timer, forMode: .common)
     profilingTerminationTimer = timer
+  }
+
+  private func openProfilingPopoverIfRequested(
+    popoverController: PopoverController,
+    relativeTo button: NSStatusBarButton
+  ) {
+    guard CommandLine.arguments.contains("--profile-open-popover") else {
+      return
+    }
+    popoverController.toggle(relativeTo: button)
   }
 
   @objc

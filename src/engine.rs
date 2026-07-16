@@ -6,6 +6,7 @@ use crate::cpu::{CpuError, CpuSample, MachCpuProvider, MachPerCoreProvider, PerC
 use crate::smc::{SensorSample, SmcError, SmcProvider};
 
 pub const MAX_LOGICAL_CPUS: usize = 64;
+pub const HISTORY_CAPACITY: usize = 180;
 pub const REQUEST_PER_CORE: u32 = 1 << 0;
 pub const REQUEST_SENSORS: u32 = 1 << 1;
 const REQUEST_MASK: u32 = REQUEST_PER_CORE | REQUEST_SENSORS;
@@ -134,6 +135,52 @@ impl EngineSnapshot {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HistoryPoint {
+    pub monotonic_ns: u64,
+    pub total_ratio: f64,
+}
+
+#[derive(Debug)]
+struct HistoryBuffer {
+    points: [HistoryPoint; HISTORY_CAPACITY],
+    start: usize,
+    len: usize,
+}
+
+impl Default for HistoryBuffer {
+    fn default() -> Self {
+        Self {
+            points: [HistoryPoint::default(); HISTORY_CAPACITY],
+            start: 0,
+            len: 0,
+        }
+    }
+}
+
+impl HistoryBuffer {
+    fn push(&mut self, point: HistoryPoint) {
+        let index = (self.start + self.len) % HISTORY_CAPACITY;
+        self.points[index] = point;
+        if self.len < HISTORY_CAPACITY {
+            self.len += 1;
+        } else {
+            self.start = (self.start + 1) % HISTORY_CAPACITY;
+        }
+    }
+
+    fn copy_into(&self, output: &mut [HistoryPoint]) -> usize {
+        let count = self.len.min(output.len());
+        let skipped = self.len - count;
+        for (output_index, point) in output.iter_mut().take(count).enumerate() {
+            let source_index = (self.start + skipped + output_index) % HISTORY_CAPACITY;
+            *point = self.points[source_index];
+        }
+        count
+    }
+}
+
 #[derive(Debug)]
 pub struct CpuEngine {
     aggregate: MachCpuProvider,
@@ -142,6 +189,7 @@ pub struct CpuEngine {
     sensor_fallback: SensorSample,
     sensor_error: Option<SmcError>,
     emissions: EmissionTimeline,
+    history: HistoryBuffer,
     snapshot: EngineSnapshot,
 }
 
@@ -176,6 +224,7 @@ impl CpuEngine {
             sensor_fallback,
             sensor_error,
             emissions: EmissionTimeline::new(started_at),
+            history: HistoryBuffer::default(),
             snapshot: EngineSnapshot::default(),
         })
     }
@@ -184,6 +233,10 @@ impl CpuEngine {
     /// engine is operating in CPU-only mode.
     pub fn sensor_error(&self) -> Option<&SmcError> {
         self.sensor_error.as_ref()
+    }
+
+    pub fn history(&self, output: &mut [HistoryPoint]) -> usize {
+        self.history.copy_into(output)
     }
 
     /// Re-establishes CPU counter baselines without rebuilding the engine.
@@ -254,6 +307,10 @@ impl CpuEngine {
         self.snapshot.aggregate = aggregate;
         self.snapshot.per_core_count = per_core_count;
         self.snapshot.sample_duration_ns = duration_ns(sample_started_at.elapsed());
+        self.history.push(HistoryPoint {
+            monotonic_ns: self.snapshot.monotonic_ns,
+            total_ratio: aggregate.total_ratio,
+        });
         Ok(Some(&self.snapshot))
     }
 }
@@ -267,7 +324,10 @@ mod tests {
     use std::error::Error as _;
     use std::time::{Duration, Instant};
 
-    use super::{EmissionTimeline, EngineError, SampleRequest, duration_ns};
+    use super::{
+        EmissionTimeline, EngineError, HISTORY_CAPACITY, HistoryBuffer, HistoryPoint,
+        SampleRequest, duration_ns,
+    };
     use crate::cpu::CpuError;
 
     #[test]
@@ -331,15 +391,47 @@ mod tests {
         assert_eq!(SampleRequest::from_bits(1 << 31), None);
     }
 
+    #[test]
+    fn history_keeps_the_latest_points_in_oldest_to_newest_order() {
+        let mut history = HistoryBuffer::default();
+        for value in 1..=(HISTORY_CAPACITY + 2) {
+            history.push(HistoryPoint {
+                monotonic_ns: value as u64,
+                total_ratio: value as f64 / 1_000.0,
+            });
+        }
+
+        let mut all = [HistoryPoint::default(); HISTORY_CAPACITY];
+        assert_eq!(history.copy_into(&mut all), HISTORY_CAPACITY);
+        assert_eq!(all[0].monotonic_ns, 3);
+        assert_eq!(all[HISTORY_CAPACITY - 1].monotonic_ns, 182);
+
+        let mut latest = [HistoryPoint::default(); 2];
+        assert_eq!(history.copy_into(&mut latest), 2);
+        assert_eq!(latest[0].monotonic_ns, 181);
+        assert_eq!(latest[1].monotonic_ns, 182);
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn warmed_aggregate_only_sample_performs_no_rust_heap_allocations() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
         let mut engine = super::CpuEngine::new(false).expect("initialize aggregate engine");
-        std::thread::sleep(Duration::from_millis(10));
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = Arc::clone(&running);
+        let worker = std::thread::spawn(move || {
+            while worker_running.load(Ordering::Relaxed) {
+                std::hint::spin_loop();
+            }
+        });
+
+        std::thread::sleep(Duration::from_millis(50));
         engine
             .sample(SampleRequest::NONE)
             .expect("warm aggregate engine");
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(50));
 
         let (sample, allocations) = crate::test_allocator::count_allocations(|| {
             engine
@@ -347,6 +439,8 @@ mod tests {
                 .map(|snapshot| snapshot.is_some())
         });
 
+        running.store(false, Ordering::Relaxed);
+        worker.join().expect("stop CPU workload");
         assert!(sample.expect("sample aggregate engine"));
         assert_eq!(allocations, 0);
     }

@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 #define rasitop_max_logical_cpus 64
+#define rasitop_history_capacity 180
 
 #define rasitop_ok 0
 #define rasitop_sample_ready 1
@@ -66,11 +67,19 @@ typedef struct {
   rasitop_sensor_sample sensors;
 } rasitop_engine_snapshot;
 
+typedef struct {
+  uint64_t monotonic_ns;
+  double total_ratio;
+} rasitop_history_point;
+
 int32_t rasitop_engine_create(rasitop_engine **out_engine);
 int32_t rasitop_engine_sample(rasitop_engine *engine,
                               uint32_t request_flags,
                               rasitop_engine_snapshot *out_snapshot);
 int32_t rasitop_engine_reset_cpu_baselines(rasitop_engine *engine);
+size_t rasitop_engine_history(rasitop_engine *engine,
+                              rasitop_history_point *out_points,
+                              size_t capacity);
 int32_t rasitop_engine_destroy(rasitop_engine *engine);
 
 static inline const rasitop_per_core_sample *
@@ -108,6 +117,10 @@ _Static_assert(offsetof(rasitop_engine_snapshot, per_core) == 80,
                "rasitop_engine_snapshot core array offset changed");
 _Static_assert(offsetof(rasitop_engine_snapshot, sensors) == 3152,
                "rasitop_engine_snapshot sensor offset changed");
+_Static_assert(sizeof(rasitop_history_point) == 16,
+               "rasitop_history_point ABI layout changed");
+_Static_assert(offsetof(rasitop_history_point, total_ratio) == 8,
+               "rasitop_history_point field order changed");
 
 #ifdef __cplusplus
 }

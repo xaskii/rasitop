@@ -17,13 +17,23 @@ enum EngineError: Error, CustomStringConvertible {
 @MainActor
 final class EngineController: NSObject {
   private weak var graphView: CPUStatusGraphView?
+  private weak var popoverController: PopoverController?
   private var engine: OpaquePointer?
   private var timer: Timer?
   private var snapshot = rasitop_engine_snapshot()
+  private var historyPoints = Array(
+    repeating: rasitop_history_point(),
+    count: Int(rasitop_history_capacity)
+  )
   private var sensorTicksRemaining = 0
+  private var sensorDetailsVisible = false
 
-  init(graphView: CPUStatusGraphView) throws {
+  init(
+    graphView: CPUStatusGraphView,
+    popoverController: PopoverController
+  ) throws {
     self.graphView = graphView
+    self.popoverController = popoverController
     super.init()
 
     var handle: OpaquePointer?
@@ -83,6 +93,13 @@ final class EngineController: NSObject {
     start()
   }
 
+  func setSensorDetailsVisible(_ isVisible: Bool) {
+    sensorDetailsVisible = isVisible
+    if isVisible {
+      sensorTicksRemaining = 0
+    }
+  }
+
   @objc
   private func sample() {
     guard let engine else {
@@ -92,7 +109,7 @@ final class EngineController: NSObject {
     var requestFlags = UInt32(rasitop_request_per_core)
     if sensorTicksRemaining == 0 {
       requestFlags |= UInt32(rasitop_request_sensors)
-      sensorTicksRemaining = 4
+      sensorTicksRemaining = sensorDetailsVisible ? 1 : 4
     } else {
       sensorTicksRemaining -= 1
     }
@@ -105,6 +122,22 @@ final class EngineController: NSObject {
     switch status {
     case rasitop_sample_ready:
       graphView?.update(from: &snapshot)
+      if sensorDetailsVisible {
+        historyPoints.withUnsafeMutableBufferPointer { buffer in
+          let count = rasitop_engine_history(
+            engine,
+            buffer.baseAddress,
+            buffer.count
+          )
+          let history = UnsafeBufferPointer(
+            start: buffer.baseAddress,
+            count: count
+          )
+          popoverController?.update(from: &snapshot, history: history)
+        }
+      } else {
+        popoverController?.update(from: &snapshot, history: nil)
+      }
     case rasitop_ok:
       break
     default:

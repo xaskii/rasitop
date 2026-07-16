@@ -1,6 +1,6 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use crate::engine::{CpuEngine, EngineSnapshot, SampleRequest};
+use crate::engine::{CpuEngine, EngineSnapshot, HistoryPoint, SampleRequest};
 
 pub const STATUS_OK: i32 = 0;
 pub const STATUS_SAMPLE_READY: i32 = 1;
@@ -104,6 +104,37 @@ pub unsafe extern "C" fn rasitop_engine_reset_cpu_baselines(engine: *mut EngineH
     }
 }
 
+/// Copies the latest aggregate CPU history into caller-owned storage in
+/// oldest-to-newest order and returns the number of points written.
+///
+/// # Safety
+///
+/// `engine` must be a live handle returned by [`rasitop_engine_create`] and
+/// accessed by only one thread at a time. When `capacity` is non-zero,
+/// `out_points` must point to writable storage for that many [`HistoryPoint`]
+/// values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rasitop_engine_history(
+    engine: *mut EngineHandle,
+    out_points: *mut HistoryPoint,
+    capacity: usize,
+) -> usize {
+    if engine.is_null() || (out_points.is_null() && capacity != 0) {
+        return 0;
+    }
+
+    catch_unwind(AssertUnwindSafe(|| {
+        let engine = unsafe { &*engine };
+        if capacity == 0 {
+            0
+        } else {
+            let output = unsafe { std::slice::from_raw_parts_mut(out_points, capacity) };
+            engine.0.history(output)
+        }
+    }))
+    .unwrap_or(0)
+}
+
 /// Destroys an engine returned by [`rasitop_engine_create`]. Passing null is a
 /// successful no-op.
 ///
@@ -131,10 +162,10 @@ mod tests {
 
     use super::{
         STATUS_ERROR_INVALID_ARGUMENT, STATUS_OK, rasitop_engine_create, rasitop_engine_destroy,
-        rasitop_engine_reset_cpu_baselines, rasitop_engine_sample,
+        rasitop_engine_history, rasitop_engine_reset_cpu_baselines, rasitop_engine_sample,
     };
     use crate::cpu::{CpuSample, PerCoreSample};
-    use crate::engine::EngineSnapshot;
+    use crate::engine::{EngineSnapshot, HistoryPoint};
     use crate::smc::SensorSample;
 
     #[test]
@@ -156,6 +187,9 @@ mod tests {
         assert_eq!(offset_of!(EngineSnapshot, per_core_count), 72);
         assert_eq!(offset_of!(EngineSnapshot, per_core), 80);
         assert_eq!(offset_of!(EngineSnapshot, sensors), 3_152);
+        assert_eq!(size_of::<HistoryPoint>(), 16);
+        assert_eq!(align_of::<HistoryPoint>(), 8);
+        assert_eq!(offset_of!(HistoryPoint, total_ratio), 8);
     }
 
     #[test]
@@ -171,6 +205,10 @@ mod tests {
         assert_eq!(
             unsafe { rasitop_engine_reset_cpu_baselines(std::ptr::null_mut()) },
             STATUS_ERROR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            unsafe { rasitop_engine_history(std::ptr::null_mut(), std::ptr::null_mut(), 0) },
+            0
         );
         assert_eq!(
             unsafe { rasitop_engine_destroy(std::ptr::null_mut()) },
