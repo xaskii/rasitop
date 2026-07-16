@@ -7,6 +7,7 @@ use std::process::{Command, Output};
 fn main() {
     println!("cargo::rerun-if-changed=app-macos/rasitop-info.plist");
     println!("cargo::rerun-if-changed=app-macos/include/rasitop.h");
+    println!("cargo::rerun-if-changed=app-macos/Resources/rasitop.icns");
     println!("cargo::rerun-if-changed=app-macos/Sources/rasitop_app");
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
@@ -89,10 +90,15 @@ fn assemble_bundle(root: &Path, out_dir: &Path) -> Result<(), String> {
     let resources = contents.join("Resources");
 
     fs::create_dir_all(&macos).map_err(display_error)?;
-    fs::create_dir_all(resources).map_err(display_error)?;
+    fs::create_dir_all(&resources).map_err(display_error)?;
     fs::copy(
         root.join("app-macos/rasitop-info.plist"),
         contents.join("Info.plist"),
+    )
+    .map_err(display_error)?;
+    fs::copy(
+        root.join("app-macos/Resources/rasitop.icns"),
+        resources.join("rasitop.icns"),
     )
     .map_err(display_error)?;
 

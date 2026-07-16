@@ -8,6 +8,8 @@
     <string>rasitop</string>
     <key>CFBundleIdentifier</key>
     <string>dev.rasitop.app</string>
+    <key>CFBundleIconFile</key>
+    <string>rasitop.icns</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
