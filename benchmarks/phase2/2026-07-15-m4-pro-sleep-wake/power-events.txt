@@ -1,0 +1,2 @@
+2026-07-15 19:25:38 -0500 Sleep  Entering Sleep state due to 'Software Sleep pid=93978':TCPKeepAlive=active Using AC (Charge:60%) 36 secs
+2026-07-15 19:26:14 -0500 Wake   Wake from Deep Idle [CDNVA] : due to MTP.DOCK.CHANNELS.AP0.IRQ RTP.multi-touch/HID Activity Using AC (Charge:60%)

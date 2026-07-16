@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "process": {
+    "name": "rasitop",
+    "pid": 92961
+  },
+  "measurement": {
+    "samples": 30,
+    "start_ns": 0,
+    "end_ns": 29168581708,
+    "duration_ns": 29168581708,
+    "duration_seconds": 29.168581708
+  },
+  "cpu": {
+    "time_start_ns": 58750208,
+    "time_end_ns": 73176541,
+    "time_delta_ns": 14426333,
+    "time_delta_seconds": 0.014426333,
+    "average_percent": 0.049458465771214793
+  },
+  "idle_wakeups": {
+    "start": 22,
+    "end": 53,
+    "delta": 31,
+    "per_second": 1.0627873617693828
+  },
+  "memory": {
+    "physical_footprint_bytes": {
+      "start": 12518216,
+      "end": 12469064,
+      "delta": -49152,
+      "min": 12469064,
+      "max": 12567368
+    },
+    "private_bytes": {
+      "start": 8503296,
+      "end": 8454144,
+      "delta": -49152,
+      "min": 8454144,
+      "max": 8552448
+    }
+  },
+  "threads": {
+    "start": 4,
+    "end": 4,
+    "delta": 0,
+    "min": 3,
+    "max": 4
+  },
+  "ports": {
+    "start": 188,
+    "end": 187,
+    "delta": -1,
+    "min": 187,
+    "max": 189
+  },
+  "disk_io": {
+    "bytes_read": {
+      "start": 887110,
+      "end": 887110,
+      "delta": 0,
+      "per_second": 0.0
+    },
+    "bytes_written": {
+      "start": 90112,
+      "end": 90112,
+      "delta": 0,
+      "per_second": 0.0
+    }
+  }
+}
