@@ -88,7 +88,7 @@ final class PopoverController: NSObject, NSPopoverDelegate {
 
     let popover = NSPopover()
     popover.behavior = .transient
-    popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    popover.animates = false
     popover.delegate = self
     popover.contentViewController = viewController
     self.popover = popover
