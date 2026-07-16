@@ -1,5 +1,7 @@
 # rasitop
 
+<img src="docs/assets/rasitop-menu-bar.png" alt="rasitop menu bar CPU monitor" width="320">
+
 rasitop is a low-overhead macOS menu bar CPU monitor written in Rust and Swift.
 It reads Mach CPU counters directly and displays current total utilization for
 each logical core in a compact graph. User, system, and nice time remain
