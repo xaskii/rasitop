@@ -21,14 +21,13 @@ private enum CPUComponentColors {
 }
 
 @MainActor
-final class PopoverController: NSObject {
+final class StatusMenuController: NSObject, NSMenuDelegate {
   var visibilityDidChange: ((Bool) -> Void)?
 
-  private weak var anchorButton: NSStatusBarButton?
-  private var panel: StatusPanel?
-  private var summaryView: SensorSummaryView?
-  private var localEventMonitor: Any?
-  private var globalEventMonitor: Any?
+  let menu = NSMenu()
+
+  private let summaryView = SensorSummaryView()
+  private var menuIsOpen = false
   private var latestSnapshot = SensorDisplaySnapshot()
   private var historyPoints = Array(
     repeating: rasitop_history_point(),
@@ -41,26 +40,35 @@ final class PopoverController: NSObject {
   )
   private var coreCount = 0
 
-  var isShown: Bool {
-    panel?.isVisible == true
+  override init() {
+    super.init()
+
+    menu.autoenablesItems = false
+    menu.delegate = self
+
+    let summaryItem = NSMenuItem()
+    summaryItem.view = summaryView
+    menu.addItem(summaryItem)
+    menu.addItem(.separator())
+
+    let quitItem = NSMenuItem(
+      title: "Quit",
+      action: #selector(NSApplication.terminate(_:)),
+      keyEquivalent: "q"
+    )
+    quitItem.keyEquivalentModifierMask = [.command]
+    quitItem.target = NSApp
+    menu.addItem(quitItem)
+
+    resizeSummaryView()
   }
 
-  func toggle(relativeTo button: NSStatusBarButton) {
-    if isShown {
-      close()
-    } else {
-      show(relativeTo: button)
-    }
+  var isShown: Bool {
+    menuIsOpen
   }
 
   func close() {
-    let wasShown = isShown
-    stopEventMonitoring()
-    panel?.orderOut(nil)
-    anchorButton = nil
-    if wasShown {
-      visibilityDidChange?(false)
-    }
+    menu.cancelTracking()
   }
 
   func update(
@@ -106,63 +114,18 @@ final class PopoverController: NSObject {
     }
   }
 
-  private func show(relativeTo button: NSStatusBarButton) {
-    let panel = self.panel ?? makePanel()
-    anchorButton = button
+  func menuWillOpen(_ menu: NSMenu) {
+    menuIsOpen = true
     updateVisibleContent()
-    position(panel, relativeTo: button)
-    panel.makeKeyAndOrderFront(nil)
-    startEventMonitoring()
     visibilityDidChange?(true)
   }
 
-  private func makePanel() -> StatusPanel {
-    let summaryView = SensorSummaryView()
-    summaryView.translatesAutoresizingMaskIntoConstraints = false
-    self.summaryView = summaryView
-
-    let backgroundView = NSVisualEffectView()
-    backgroundView.material = .popover
-    backgroundView.blendingMode = .behindWindow
-    backgroundView.state = .active
-    backgroundView.wantsLayer = true
-    backgroundView.layer?.cornerRadius = 12
-    backgroundView.layer?.masksToBounds = true
-    backgroundView.addSubview(summaryView)
-
-    NSLayoutConstraint.activate([
-      summaryView.topAnchor.constraint(equalTo: backgroundView.topAnchor),
-      summaryView.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor),
-      summaryView.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor),
-      summaryView.bottomAnchor.constraint(equalTo: backgroundView.bottomAnchor),
-    ])
-
-    let panel = StatusPanel(
-      contentRect: .zero,
-      styleMask: [.borderless, .nonactivatingPanel],
-      backing: .buffered,
-      defer: false
-    )
-    panel.animationBehavior = .none
-    panel.backgroundColor = .clear
-    panel.isOpaque = false
-    panel.hasShadow = true
-    panel.isFloatingPanel = true
-    panel.hidesOnDeactivate = false
-    panel.level = .popUpMenu
-    panel.collectionBehavior = [.transient, .fullScreenAuxiliary]
-    panel.contentView = backgroundView
-    self.panel = panel
-
-    updateVisibleContent()
-    return panel
+  func menuDidClose(_ menu: NSMenu) {
+    menuIsOpen = false
+    visibilityDidChange?(false)
   }
 
   private func updateVisibleContent() {
-    guard let summaryView, let panel else {
-      return
-    }
-
     historyPoints.withUnsafeBufferPointer { historyBuffer in
       coreSamples.withUnsafeBufferPointer { coreBuffer in
         summaryView.update(
@@ -178,86 +141,14 @@ final class PopoverController: NSObject {
         )
       }
     }
-    let contentSize = NSSize(
+    resizeSummaryView()
+  }
+
+  private func resizeSummaryView() {
+    summaryView.frame.size = NSSize(
       width: SensorSummaryView.width,
       height: summaryView.preferredHeight
     )
-    panel.setContentSize(contentSize)
-    if let anchorButton, isShown {
-      position(panel, relativeTo: anchorButton)
-    }
-  }
-
-  private func position(_ panel: NSPanel, relativeTo button: NSStatusBarButton) {
-    guard let buttonWindow = button.window else {
-      return
-    }
-
-    let anchorFrame = buttonWindow.convertToScreen(
-      button.convert(button.bounds, to: nil)
-    )
-    let screenFrame = (buttonWindow.screen ?? NSScreen.main)?.visibleFrame ?? anchorFrame
-    let margin = 8.0
-    let gap = 6.0
-    let size = panel.frame.size
-    let centeredX = anchorFrame.midX - size.width / 2
-    let origin = NSPoint(
-      x: min(
-        max(centeredX, screenFrame.minX + margin),
-        screenFrame.maxX - size.width - margin
-      ),
-      y: max(anchorFrame.minY - gap - size.height, screenFrame.minY + margin)
-    )
-    panel.setFrameOrigin(origin)
-  }
-
-  private func startEventMonitoring() {
-    stopEventMonitoring()
-    let mouseEvents: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
-
-    localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
-      [weak self] event in
-      guard event.keyCode == 53 else {
-        return event
-      }
-      self?.close()
-      return nil
-    }
-
-    globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseEvents) {
-      [weak self] _ in
-      let mouseLocation = NSEvent.mouseLocation
-      Task { @MainActor in
-        self?.closeUnlessClickInAnchor(at: mouseLocation)
-      }
-    }
-  }
-
-  private func closeUnlessClickInAnchor(at screenLocation: NSPoint) {
-    guard
-      let anchorButton,
-      let buttonWindow = anchorButton.window
-    else {
-      close()
-      return
-    }
-    let anchorFrame = buttonWindow.convertToScreen(
-      anchorButton.convert(anchorButton.bounds, to: nil)
-    )
-    if !anchorFrame.contains(screenLocation) {
-      close()
-    }
-  }
-
-  private func stopEventMonitoring() {
-    if let localEventMonitor {
-      NSEvent.removeMonitor(localEventMonitor)
-      self.localEventMonitor = nil
-    }
-    if let globalEventMonitor {
-      NSEvent.removeMonitor(globalEventMonitor)
-      self.globalEventMonitor = nil
-    }
   }
 
   private func finite(_ value: Double) -> Double? {
@@ -266,13 +157,6 @@ final class PopoverController: NSObject {
 
   private func clamped(_ ratio: Double) -> Double {
     ratio.isFinite ? min(max(ratio, 0), 1) : 0
-  }
-}
-
-@MainActor
-private final class StatusPanel: NSPanel {
-  override var canBecomeKey: Bool {
-    true
   }
 }
 
@@ -286,44 +170,13 @@ private final class SensorSummaryView: NSView {
   private var tableHeightConstraint: NSLayoutConstraint?
 
   var preferredHeight: CGFloat {
-    219 + statsTable.preferredHeight
+    181 + statsTable.preferredHeight
   }
 
   init() {
     super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: 252))
 
-    let iconView = NSImageView()
-    iconView.image = NSImage(
-      systemSymbolName: "chart.bar.fill",
-      accessibilityDescription: nil
-    )
-    iconView.contentTintColor = .secondaryLabelColor
-
-    let titleLabel = NSTextField(labelWithString: "CPU")
-    titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-
-    let headerSpacer = NSView()
-    headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-    let quitButton = NSButton(
-      title: "Quit",
-      target: NSApp,
-      action: #selector(NSApplication.terminate(_:))
-    )
-    quitButton.isBordered = false
-    quitButton.focusRingType = .none
-    quitButton.font = .systemFont(ofSize: 11)
-    quitButton.toolTip = "Quit rasitop"
-    quitButton.setAccessibilityLabel("Quit rasitop")
-
-    let headerStack = NSStackView(
-      views: [iconView, titleLabel, headerSpacer, quitButton]
-    )
-    headerStack.orientation = .horizontal
-    headerStack.alignment = .centerY
-    headerStack.spacing = 6
-
-    let historyLabel = NSTextField(labelWithString: "CPU HISTORY")
+    let historyLabel = NSTextField(labelWithString: "HISTORY")
     historyLabel.font = .systemFont(ofSize: 9, weight: .semibold)
     historyLabel.textColor = .secondaryLabelColor
 
@@ -332,7 +185,7 @@ private final class SensorSummaryView: NSView {
     historyStack.alignment = .width
     historyStack.spacing = 5
 
-    let coresLabel = NSTextField(labelWithString: "CPU CORES")
+    let coresLabel = NSTextField(labelWithString: "CORES")
     coresLabel.font = .systemFont(ofSize: 9, weight: .semibold)
     coresLabel.textColor = .secondaryLabelColor
 
@@ -362,7 +215,6 @@ private final class SensorSummaryView: NSView {
 
     let contentStack = NSStackView(
       views: [
-        headerStack,
         historyStack,
         statsTable,
         coresStack,
@@ -372,7 +224,7 @@ private final class SensorSummaryView: NSView {
     contentStack.orientation = .vertical
     contentStack.alignment = .width
     contentStack.distribution = .fill
-    contentStack.spacing = 10
+    contentStack.spacing = 7
     addSubview(contentStack)
 
     let tableHeightConstraint = statsTable.heightAnchor.constraint(
@@ -382,14 +234,10 @@ private final class SensorSummaryView: NSView {
     self.tableHeightConstraint = tableHeightConstraint
 
     NSLayoutConstraint.activate([
-      contentStack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+      contentStack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
       contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
       contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-      contentStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-      iconView.widthAnchor.constraint(equalToConstant: 14),
-      iconView.heightAnchor.constraint(equalToConstant: 14),
-      headerStack.heightAnchor.constraint(equalToConstant: 18),
-      headerStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+      contentStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
       historyStack.heightAnchor.constraint(equalToConstant: 81),
       historyStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
       historyLabel.widthAnchor.constraint(equalTo: historyStack.widthAnchor),

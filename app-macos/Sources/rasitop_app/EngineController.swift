@@ -17,7 +17,7 @@ enum EngineError: Error, CustomStringConvertible {
 @MainActor
 final class EngineController: NSObject {
   private weak var graphView: CPUStatusGraphView?
-  private weak var popoverController: PopoverController?
+  private weak var statusMenuController: StatusMenuController?
   private var engine: OpaquePointer?
   private var timer: Timer?
   private var snapshot = rasitop_engine_snapshot()
@@ -30,10 +30,10 @@ final class EngineController: NSObject {
 
   init(
     graphView: CPUStatusGraphView,
-    popoverController: PopoverController
+    statusMenuController: StatusMenuController
   ) throws {
     self.graphView = graphView
-    self.popoverController = popoverController
+    self.statusMenuController = statusMenuController
     super.init()
 
     var handle: OpaquePointer?
@@ -133,10 +133,10 @@ final class EngineController: NSObject {
             start: buffer.baseAddress,
             count: count
           )
-          popoverController?.update(from: &snapshot, history: history)
+          statusMenuController?.update(from: &snapshot, history: history)
         }
       } else {
-        popoverController?.update(from: &snapshot, history: nil)
+        statusMenuController?.update(from: &snapshot, history: nil)
       }
     case rasitop_ok:
       break

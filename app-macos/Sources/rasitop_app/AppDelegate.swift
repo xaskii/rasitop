@@ -5,9 +5,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let statusItemWidth = 80.0
   private var statusItem: NSStatusItem?
   private var engineController: EngineController?
-  private var popoverController: PopoverController?
+  private var statusMenuController: StatusMenuController?
   private var profilingTerminationTimer: Timer?
-  private var statusItemEventMonitor: Any?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
@@ -40,26 +39,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ]
     button.addSubview(graphView)
 
-    let popoverController = PopoverController()
-    self.popoverController = popoverController
+    let statusMenuController = StatusMenuController()
+    self.statusMenuController = statusMenuController
     statusItem = item
-    installStatusItemClickMonitor(for: button)
+    item.menu = statusMenuController.menu
 
     do {
       let controller = try EngineController(
         graphView: graphView,
-        popoverController: popoverController
+        statusMenuController: statusMenuController
       )
-      popoverController.visibilityDidChange = { [weak controller] isVisible in
+      statusMenuController.visibilityDidChange = { [weak controller] isVisible in
         controller?.setSensorDetailsVisible(isVisible)
       }
       controller.start()
       engineController = controller
       observeSystemSleepAndWake()
-      openProfilingPopoverIfRequested(
-        popoverController: popoverController,
-        relativeTo: button
-      )
+      openProfilingMenuIfRequested()
     } catch {
       NSLog("rasitop startup failed: %@", String(describing: error))
     }
@@ -67,40 +63,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     scheduleProfilingTerminationIfRequested()
   }
 
+  func applicationShouldHandleReopen(
+    _ sender: NSApplication,
+    hasVisibleWindows flag: Bool
+  ) -> Bool {
+    openStatusMenu()
+    return false
+  }
+
   func applicationWillTerminate(_ notification: Notification) {
     NSWorkspace.shared.notificationCenter.removeObserver(self)
     profilingTerminationTimer?.invalidate()
     profilingTerminationTimer = nil
-    if let statusItemEventMonitor {
-      NSEvent.removeMonitor(statusItemEventMonitor)
-      self.statusItemEventMonitor = nil
-    }
     engineController?.stop()
     engineController = nil
-    popoverController?.close()
-    popoverController = nil
+    statusMenuController?.close()
+    statusItem?.menu = nil
+    statusMenuController = nil
     statusItem = nil
-  }
-
-  private func togglePopover(_ sender: NSStatusBarButton) {
-    popoverController?.toggle(relativeTo: sender)
-  }
-
-  private func installStatusItemClickMonitor(for button: NSStatusBarButton) {
-    statusItemEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) {
-      [weak self, weak button] event in
-      guard
-        let self,
-        let button,
-        event.window === button.window,
-        button.bounds.contains(button.convert(event.locationInWindow, from: nil))
-      else {
-        return event
-      }
-
-      togglePopover(button)
-      return nil
-    }
   }
 
   private func observeSystemSleepAndWake() {
@@ -158,14 +138,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     profilingTerminationTimer = timer
   }
 
-  private func openProfilingPopoverIfRequested(
-    popoverController: PopoverController,
-    relativeTo button: NSStatusBarButton
-  ) {
+  private func openProfilingMenuIfRequested() {
     guard CommandLine.arguments.contains("--profile-open-popover") else {
       return
     }
-    popoverController.toggle(relativeTo: button)
+    openStatusMenu()
+  }
+
+  private func openStatusMenu() {
+    guard statusMenuController?.isShown == false else {
+      return
+    }
+    DispatchQueue.main.async { [weak self] in
+      guard let self, statusMenuController?.isShown == false else {
+        return
+      }
+      statusItem?.button?.performClick(nil)
+    }
   }
 
   @objc
