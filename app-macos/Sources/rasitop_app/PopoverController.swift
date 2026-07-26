@@ -8,6 +8,18 @@ private struct SensorDisplaySnapshot {
   var systemPower: Double?
 }
 
+private struct CPUComponentDisplaySample {
+  var user = 0.0
+  var system = 0.0
+  var nice = 0.0
+}
+
+private enum CPUComponentColors {
+  static let user = NSColor.systemBlue
+  static let system = NSColor.systemRed.withAlphaComponent(0.88)
+  static let nice = NSColor.systemPurple.withAlphaComponent(0.72)
+}
+
 @MainActor
 final class PopoverController: NSObject {
   var visibilityDidChange: ((Bool) -> Void)?
@@ -23,6 +35,11 @@ final class PopoverController: NSObject {
     count: Int(rasitop_history_capacity)
   )
   private var historyCount = 0
+  private var coreSamples = Array(
+    repeating: CPUComponentDisplaySample(),
+    count: Int(rasitop_max_logical_cpus)
+  )
+  private var coreCount = 0
 
   var isShown: Bool {
     panel?.isVisible == true
@@ -57,6 +74,27 @@ final class PopoverController: NSObject {
       fanSpeed: finite(snapshot.sensors.fan_rpm),
       systemPower: finite(snapshot.sensors.system_power_w)
     )
+    coreCount = min(
+      Int(snapshot.per_core_count),
+      coreSamples.count
+    )
+    withUnsafePointer(to: &snapshot) { snapshotPointer in
+      for index in 0..<coreCount {
+        guard
+          let usage = rasitop_snapshot_core(
+            snapshotPointer,
+            UInt32(index)
+          )?.pointee.usage
+        else {
+          continue
+        }
+        coreSamples[index] = CPUComponentDisplaySample(
+          user: clamped(usage.user_ratio),
+          system: clamped(usage.system_ratio),
+          nice: clamped(usage.nice_ratio)
+        )
+      }
+    }
     if let history {
       historyCount = min(history.count, historyPoints.count)
       for index in 0..<historyCount {
@@ -125,14 +163,20 @@ final class PopoverController: NSObject {
       return
     }
 
-    historyPoints.withUnsafeBufferPointer { buffer in
-      summaryView.update(
-        with: latestSnapshot,
-        history: UnsafeBufferPointer(
-          start: buffer.baseAddress,
-          count: historyCount
+    historyPoints.withUnsafeBufferPointer { historyBuffer in
+      coreSamples.withUnsafeBufferPointer { coreBuffer in
+        summaryView.update(
+          with: latestSnapshot,
+          history: UnsafeBufferPointer(
+            start: historyBuffer.baseAddress,
+            count: historyCount
+          ),
+          cores: UnsafeBufferPointer(
+            start: coreBuffer.baseAddress,
+            count: coreCount
+          )
         )
-      )
+      }
     }
     let contentSize = NSSize(
       width: SensorSummaryView.width,
@@ -221,7 +265,7 @@ final class PopoverController: NSObject {
   }
 
   private func clamped(_ ratio: Double) -> Double {
-    min(max(ratio, 0), 1)
+    ratio.isFinite ? min(max(ratio, 0), 1) : 0
   }
 }
 
@@ -238,10 +282,11 @@ private final class SensorSummaryView: NSView {
 
   private let historyView = CPUHistoryView()
   private let statsTable = StatsTableView()
+  private let coreComponentsView = CPUCoreComponentsView()
   private var tableHeightConstraint: NSLayoutConstraint?
 
   var preferredHeight: CGFloat {
-    142 + statsTable.preferredHeight
+    219 + statsTable.preferredHeight
   }
 
   init() {
@@ -287,11 +332,40 @@ private final class SensorSummaryView: NSView {
     historyStack.alignment = .width
     historyStack.spacing = 5
 
+    let coresLabel = NSTextField(labelWithString: "CPU CORES")
+    coresLabel.font = .systemFont(ofSize: 9, weight: .semibold)
+    coresLabel.textColor = .secondaryLabelColor
+
+    let coresSpacer = NSView()
+    coresSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+    let legend = NSStackView(
+      views: [
+        Self.makeLegendItem(title: "User", color: CPUComponentColors.user),
+        Self.makeLegendItem(title: "System", color: CPUComponentColors.system),
+        Self.makeLegendItem(title: "Nice", color: CPUComponentColors.nice),
+      ]
+    )
+    legend.orientation = .horizontal
+    legend.alignment = .centerY
+    legend.spacing = 7
+
+    let coresHeader = NSStackView(views: [coresLabel, coresSpacer, legend])
+    coresHeader.orientation = .horizontal
+    coresHeader.alignment = .centerY
+    coresHeader.spacing = 6
+
+    let coresStack = NSStackView(views: [coresHeader, coreComponentsView])
+    coresStack.orientation = .vertical
+    coresStack.alignment = .width
+    coresStack.spacing = 5
+
     let contentStack = NSStackView(
       views: [
         headerStack,
         historyStack,
         statsTable,
+        coresStack,
       ]
     )
     contentStack.translatesAutoresizingMaskIntoConstraints = false
@@ -323,6 +397,11 @@ private final class SensorSummaryView: NSView {
       historyView.widthAnchor.constraint(equalTo: historyStack.widthAnchor),
       statsTable.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
       tableHeightConstraint,
+      coresStack.heightAnchor.constraint(equalToConstant: 66),
+      coresStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+      coresHeader.widthAnchor.constraint(equalTo: coresStack.widthAnchor),
+      coreComponentsView.heightAnchor.constraint(equalToConstant: 50),
+      coreComponentsView.widthAnchor.constraint(equalTo: coresStack.widthAnchor),
     ])
   }
 
@@ -333,11 +412,39 @@ private final class SensorSummaryView: NSView {
 
   func update(
     with snapshot: SensorDisplaySnapshot,
-    history: UnsafeBufferPointer<rasitop_history_point>
+    history: UnsafeBufferPointer<rasitop_history_point>,
+    cores: UnsafeBufferPointer<CPUComponentDisplaySample>
   ) {
     historyView.update(history)
     statsTable.update(with: snapshot)
+    coreComponentsView.update(cores)
     tableHeightConstraint?.constant = statsTable.preferredHeight
+  }
+
+  private static func makeLegendItem(
+    title: String,
+    color: NSColor
+  ) -> NSStackView {
+    let swatch = NSView()
+    swatch.translatesAutoresizingMaskIntoConstraints = false
+    swatch.wantsLayer = true
+    swatch.layer?.backgroundColor = color.cgColor
+    swatch.layer?.cornerRadius = 2
+
+    let label = NSTextField(labelWithString: title)
+    label.font = .systemFont(ofSize: 9)
+    label.textColor = .secondaryLabelColor
+
+    let item = NSStackView(views: [swatch, label])
+    item.orientation = .horizontal
+    item.alignment = .centerY
+    item.spacing = 3
+
+    NSLayoutConstraint.activate([
+      swatch.widthAnchor.constraint(equalToConstant: 6),
+      swatch.heightAnchor.constraint(equalToConstant: 6),
+    ])
+    return item
   }
 }
 
@@ -462,6 +569,251 @@ private final class CPUHistoryView: NSView {
     gridLayer.strokeColor = NSColor.separatorColor.withAlphaComponent(0.28).cgColor
     fillLayer.fillColor = NSColor.systemBlue.withAlphaComponent(0.16).cgColor
     lineLayer.strokeColor = NSColor.systemBlue.cgColor
+  }
+}
+
+@MainActor
+private final class CPUCoreComponentsView: NSView {
+  private let barGap = 2.0
+  private let barRadius = 2.5
+  private let idleLayer = CAShapeLayer()
+  private let componentsLayer = CALayer()
+  private let componentsMaskLayer = CAShapeLayer()
+  private let userLayer = CAShapeLayer()
+  private let systemLayer = CAShapeLayer()
+  private let niceLayer = CAShapeLayer()
+  private var samples = Array(
+    repeating: CPUComponentDisplaySample(),
+    count: Int(rasitop_max_logical_cpus)
+  )
+  private var sampleCount = 0
+
+  init() {
+    super.init(frame: .zero)
+
+    setAccessibilityElement(true)
+    setAccessibilityRole(.image)
+    setAccessibilityLabel("CPU components per logical core")
+
+    wantsLayer = true
+    layer?.cornerRadius = 7
+    layer?.masksToBounds = true
+    layer?.addSublayer(idleLayer)
+    layer?.addSublayer(componentsLayer)
+    componentsLayer.mask = componentsMaskLayer
+    componentsLayer.addSublayer(userLayer)
+    componentsLayer.addSublayer(systemLayer)
+    componentsLayer.addSublayer(niceLayer)
+    updateColors()
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) is not supported")
+  }
+
+  override func layout() {
+    super.layout()
+    updatePaths()
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    updateColors()
+  }
+
+  func update(_ cores: UnsafeBufferPointer<CPUComponentDisplaySample>) {
+    sampleCount = min(cores.count, samples.count)
+    var busyTotal = 0.0
+    for index in 0..<sampleCount {
+      samples[index] = cores[index]
+      busyTotal += min(
+        cores[index].user + cores[index].system + cores[index].nice,
+        1
+      )
+    }
+    if sampleCount > 0 {
+      setAccessibilityValue(
+        String(
+          format: "%d logical cores, %.0f percent average utilization",
+          sampleCount,
+          busyTotal / Double(sampleCount) * 100
+        )
+      )
+    }
+    updatePaths()
+  }
+
+  private func updatePaths() {
+    let content = bounds.insetBy(dx: 6, dy: 5)
+
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    idleLayer.frame = bounds
+    componentsLayer.frame = bounds
+    componentsMaskLayer.frame = bounds
+    userLayer.frame = bounds
+    systemLayer.frame = bounds
+    niceLayer.frame = bounds
+
+    guard sampleCount > 0, content.width > 0, content.height > 0 else {
+      idleLayer.path = nil
+      componentsMaskLayer.path = nil
+      userLayer.path = nil
+      systemLayer.path = nil
+      niceLayer.path = nil
+      CATransaction.commit()
+      return
+    }
+
+    let scale = backingScale
+    let contentMinXPixel = Int((content.minX * scale).rounded())
+    let contentMaxXPixel = Int((content.maxX * scale).rounded())
+    let contentMinYPixel = Int((content.minY * scale).rounded())
+    let contentMaxYPixel = Int((content.maxY * scale).rounded())
+    let contentWidthPixels = contentMaxXPixel - contentMinXPixel
+    let contentHeightPixels = contentMaxYPixel - contentMinYPixel
+    let gapPixels = max(Int((barGap * scale).rounded()), 1)
+    let availableWidthPixels =
+      contentWidthPixels - gapPixels * max(sampleCount - 1, 0)
+
+    guard
+      availableWidthPixels >= sampleCount,
+      contentHeightPixels > 0
+    else {
+      idleLayer.path = nil
+      componentsMaskLayer.path = nil
+      userLayer.path = nil
+      systemLayer.path = nil
+      niceLayer.path = nil
+      CATransaction.commit()
+      return
+    }
+
+    let baseBarWidthPixels = availableWidthPixels / sampleCount
+    let extraWidthPixels = availableWidthPixels % sampleCount
+    let idlePath = CGMutablePath()
+    let userPath = CGMutablePath()
+    let systemPath = CGMutablePath()
+    let nicePath = CGMutablePath()
+    var xPixel = contentMinXPixel
+
+    for index in 0..<sampleCount {
+      let barWidthPixels =
+        baseBarWidthPixels + (index < extraWidthPixels ? 1 : 0)
+      let x = CGFloat(xPixel) / scale
+      let barWidth = CGFloat(barWidthPixels) / scale
+      let trackRect = CGRect(
+        x: x,
+        y: CGFloat(contentMinYPixel) / scale,
+        width: barWidth,
+        height: CGFloat(contentHeightPixels) / scale
+      )
+      let radius = min(
+        barRadius,
+        trackRect.width / 2,
+        trackRect.height / 2
+      )
+      idlePath.addPath(
+        CGPath(
+          roundedRect: trackRect,
+          cornerWidth: radius,
+          cornerHeight: radius,
+          transform: nil
+        )
+      )
+
+      let sample = samples[index]
+      let user = clamped(sample.user)
+      let system = min(clamped(sample.system), 1 - user)
+      let nice = min(clamped(sample.nice), 1 - user - system)
+      let userEndPixel = min(
+        Int((user * CGFloat(contentHeightPixels)).rounded()),
+        contentHeightPixels
+      )
+      let systemEndPixel = min(
+        Int(((user + system) * CGFloat(contentHeightPixels)).rounded()),
+        contentHeightPixels
+      )
+      let niceEndPixel = min(
+        Int(((user + system + nice) * CGFloat(contentHeightPixels)).rounded()),
+        contentHeightPixels
+      )
+
+      addSegment(
+        fromPixel: 0,
+        toPixel: userEndPixel,
+        contentMinYPixel: contentMinYPixel,
+        scale: scale,
+        x: x,
+        width: barWidth,
+        path: userPath
+      )
+      addSegment(
+        fromPixel: userEndPixel,
+        toPixel: systemEndPixel,
+        contentMinYPixel: contentMinYPixel,
+        scale: scale,
+        x: x,
+        width: barWidth,
+        path: systemPath
+      )
+      addSegment(
+        fromPixel: systemEndPixel,
+        toPixel: niceEndPixel,
+        contentMinYPixel: contentMinYPixel,
+        scale: scale,
+        x: x,
+        width: barWidth,
+        path: nicePath
+      )
+      xPixel += barWidthPixels + gapPixels
+    }
+
+    idleLayer.path = idlePath
+    componentsMaskLayer.path = idlePath
+    userLayer.path = userPath
+    systemLayer.path = systemPath
+    niceLayer.path = nicePath
+    CATransaction.commit()
+  }
+
+  private func addSegment(
+    fromPixel: Int,
+    toPixel: Int,
+    contentMinYPixel: Int,
+    scale: CGFloat,
+    x: CGFloat,
+    width: CGFloat,
+    path: CGMutablePath
+  ) {
+    guard toPixel > fromPixel else {
+      return
+    }
+    let rect = CGRect(
+      x: x,
+      y: CGFloat(contentMinYPixel + fromPixel) / scale,
+      width: width,
+      height: CGFloat(toPixel - fromPixel) / scale
+    )
+    path.addRect(rect)
+  }
+
+  private var backingScale: CGFloat {
+    max(window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1, 1)
+  }
+
+  private func clamped(_ ratio: Double) -> CGFloat {
+    ratio.isFinite ? CGFloat(min(max(ratio, 0), 1)) : 0
+  }
+
+  private func updateColors() {
+    layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.06).cgColor
+    idleLayer.fillColor = NSColor.separatorColor.withAlphaComponent(0.10).cgColor
+    componentsMaskLayer.fillColor = NSColor.black.cgColor
+    userLayer.fillColor = CPUComponentColors.user.cgColor
+    systemLayer.fillColor = CPUComponentColors.system.cgColor
+    niceLayer.fillColor = CPUComponentColors.nice.cgColor
   }
 }
 
