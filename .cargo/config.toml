@@ -1,3 +1,6 @@
+[alias]
+install-app = "run --quiet --manifest-path tools/install-app/Cargo.toml --"
+
 [target.aarch64-apple-darwin]
 linker = "scripts/cargo-linker.sh"
 

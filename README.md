@@ -28,6 +28,15 @@ Launch the release app directly with:
 open -n target/release/rasitop.app
 ```
 
+Install the current release bundle in `/Applications` with:
+
+```sh
+cargo install-app
+```
+
+This verifies the newly built bundle, replaces the installed copy with rollback
+on failure, and relaunches rasitop if it was already running.
+
 ## CSV recorder
 
 ```sh
