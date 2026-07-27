@@ -171,10 +171,13 @@ private final class SensorSummaryPresenter {
   }
 
   func resizeView() {
-    view.frame.size = NSSize(
+    let size = NSSize(
       width: SensorSummaryView.width,
       height: view.preferredHeight
     )
+    if view.frame.size != size {
+      view.setFrameSize(size)
+    }
   }
 
   private func finite(_ value: Double) -> Double? {
@@ -232,7 +235,10 @@ final class SensorSummaryPreviewWindowController: NSWindowController, SensorDeta
       history: history,
       render: true
     )
-    window?.setContentSize(summaryPresenter.view.frame.size)
+    let size = summaryPresenter.view.frame.size
+    if window?.contentView?.frame.size != size {
+      window?.setContentSize(size)
+    }
   }
 }
 
@@ -342,7 +348,10 @@ private final class SensorSummaryView: NSView {
     historyView.update(history)
     statsTable.update(with: snapshot)
     coreComponentsView.update(cores)
-    tableHeightConstraint?.constant = statsTable.preferredHeight
+    let tableHeight = statsTable.preferredHeight
+    if tableHeightConstraint?.constant != tableHeight {
+      tableHeightConstraint?.constant = tableHeight
+    }
   }
 
   private static func makeLegendItem(
@@ -382,6 +391,7 @@ private final class CPUHistoryView: NSView {
     count: Int(rasitop_history_capacity)
   )
   private var valueCount = 0
+  private var accessibilityPercent: Int?
 
   init() {
     super.init(frame: .zero)
@@ -427,9 +437,13 @@ private final class CPUHistoryView: NSView {
       values[index] = min(max(history[index].total_ratio, 0), 1)
     }
     if valueCount > 0 {
-      setAccessibilityValue(
-        String(format: "Current utilization %.0f percent", values[valueCount - 1] * 100)
-      )
+      let percent = Int((values[valueCount - 1] * 100).rounded())
+      if accessibilityPercent != percent {
+        accessibilityPercent = percent
+        setAccessibilityValue(
+          String(format: "Current utilization %d percent", percent)
+        )
+      }
     }
     updatePaths()
   }
@@ -511,6 +525,8 @@ private final class CPUCoreComponentsView: NSView {
     count: Int(rasitop_max_logical_cpus)
   )
   private var sampleCount = 0
+  private var accessibilityCoreCount: Int?
+  private var accessibilityPercent: Int?
 
   init() {
     super.init(frame: .zero)
@@ -557,13 +573,20 @@ private final class CPUCoreComponentsView: NSView {
       )
     }
     if sampleCount > 0 {
-      setAccessibilityValue(
-        String(
-          format: "%d logical cores, %.0f percent average utilization",
-          sampleCount,
-          busyTotal / Double(sampleCount) * 100
-        )
+      let percent = Int(
+        (busyTotal / Double(sampleCount) * 100).rounded()
       )
+      if accessibilityCoreCount != sampleCount || accessibilityPercent != percent {
+        accessibilityCoreCount = sampleCount
+        accessibilityPercent = percent
+        setAccessibilityValue(
+          String(
+            format: "%d logical cores, %d percent average utilization",
+            sampleCount,
+            percent
+          )
+        )
+      }
     }
     updatePaths()
   }
@@ -861,8 +884,14 @@ private final class StatsRow: NSView {
   }
 
   func update(_ value: String?) {
-    valueLabel.stringValue = value ?? ""
-    isHidden = value == nil
+    let stringValue = value ?? ""
+    if valueLabel.stringValue != stringValue {
+      valueLabel.stringValue = stringValue
+    }
+    let shouldHide = value == nil
+    if isHidden != shouldHide {
+      isHidden = shouldHide
+    }
   }
 
   private var backingScale: CGFloat {
