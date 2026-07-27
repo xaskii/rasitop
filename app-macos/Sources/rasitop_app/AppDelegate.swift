@@ -6,9 +6,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var statusItem: NSStatusItem?
   private var engineController: EngineController?
   private var statusMenuController: StatusMenuController?
+  private var previewWindowController: SensorSummaryPreviewWindowController?
   private var profilingTerminationTimer: Timer?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    if CommandLine.arguments.contains("--ui-preview") {
+      showUIPreview()
+      scheduleProfilingTerminationIfRequested()
+      return
+    }
+
     NSApp.setActivationPolicy(.accessory)
 
     let item = NSStatusBar.system.statusItem(
@@ -47,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     do {
       let controller = try EngineController(
         graphView: graphView,
-        statusMenuController: statusMenuController
+        sensorDetailsConsumer: statusMenuController
       )
       statusMenuController.visibilityDidChange = { [weak controller] isVisible in
         controller?.setSensorDetailsVisible(isVisible)
@@ -67,6 +74,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     _ sender: NSApplication,
     hasVisibleWindows flag: Bool
   ) -> Bool {
+    if let previewWindowController {
+      previewWindowController.showWindow(nil)
+      NSApp.activate(ignoringOtherApps: true)
+      return false
+    }
+
     openStatusMenu()
     return false
   }
@@ -75,12 +88,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     NSWorkspace.shared.notificationCenter.removeObserver(self)
     profilingTerminationTimer?.invalidate()
     profilingTerminationTimer = nil
+    previewWindowController?.close()
+    previewWindowController = nil
     engineController?.stop()
     engineController = nil
     statusMenuController?.close()
     statusItem?.menu = nil
     statusMenuController = nil
     statusItem = nil
+  }
+
+  private func showUIPreview() {
+    NSApp.setActivationPolicy(.regular)
+    let previewController = SensorSummaryPreviewWindowController()
+    previewWindowController = previewController
+    previewController.showWindow(nil)
+    NSApp.activate(ignoringOtherApps: true)
+
+    do {
+      let controller = try EngineController(
+        graphView: nil,
+        sensorDetailsConsumer: previewController
+      )
+      controller.setSensorDetailsVisible(true)
+      controller.start()
+      engineController = controller
+      observeSystemSleepAndWake()
+    } catch {
+      NSLog("rasitop preview startup failed: %@", String(describing: error))
+    }
   }
 
   private func observeSystemSleepAndWake() {

@@ -24,3 +24,10 @@ and `jj commit`.
 - Try `cargo run --release -- record --duration 1m` to sanity-check live CPU
   sampling output.
 - Stop with Ctrl-C to verify clean shutdown.
+- For UI work, build the release app and open its live-data preview window with
+  `open -n target/release/rasitop.app --args --ui-preview`. Add
+  `--profile-duration-seconds <seconds>` to make an automated check exit on its
+  own.
+- The preview hosts the production sensor summary in a standard window, but it
+  does not exercise native `NSMenu` items or dismissal. Smoke-test the normal
+  status menu after changing menu integration or behavior.

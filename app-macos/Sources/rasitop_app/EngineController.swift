@@ -17,7 +17,7 @@ enum EngineError: Error, CustomStringConvertible {
 @MainActor
 final class EngineController: NSObject {
   private weak var graphView: CPUStatusGraphView?
-  private weak var statusMenuController: StatusMenuController?
+  private weak var sensorDetailsConsumer: (any SensorDetailsConsumer)?
   private var engine: OpaquePointer?
   private var timer: Timer?
   private var snapshot = rasitop_engine_snapshot()
@@ -29,11 +29,11 @@ final class EngineController: NSObject {
   private var sensorDetailsVisible = false
 
   init(
-    graphView: CPUStatusGraphView,
-    statusMenuController: StatusMenuController
+    graphView: CPUStatusGraphView?,
+    sensorDetailsConsumer: any SensorDetailsConsumer
   ) throws {
     self.graphView = graphView
-    self.statusMenuController = statusMenuController
+    self.sensorDetailsConsumer = sensorDetailsConsumer
     super.init()
 
     var handle: OpaquePointer?
@@ -133,10 +133,10 @@ final class EngineController: NSObject {
             start: buffer.baseAddress,
             count: count
           )
-          statusMenuController?.update(from: &snapshot, history: history)
+          sensorDetailsConsumer?.update(from: &snapshot, history: history)
         }
       } else {
-        statusMenuController?.update(from: &snapshot, history: nil)
+        sensorDetailsConsumer?.update(from: &snapshot, history: nil)
       }
     case rasitop_ok:
       break

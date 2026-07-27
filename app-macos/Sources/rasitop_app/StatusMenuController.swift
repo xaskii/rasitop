@@ -21,24 +21,21 @@ private enum CPUComponentColors {
 }
 
 @MainActor
-final class StatusMenuController: NSObject, NSMenuDelegate {
+protocol SensorDetailsConsumer: AnyObject {
+  func update(
+    from snapshot: inout rasitop_engine_snapshot,
+    history: UnsafeBufferPointer<rasitop_history_point>?
+  )
+}
+
+@MainActor
+final class StatusMenuController: NSObject, NSMenuDelegate, SensorDetailsConsumer {
   var visibilityDidChange: ((Bool) -> Void)?
 
   let menu = NSMenu()
 
-  private let summaryView = SensorSummaryView()
+  private let summaryPresenter = SensorSummaryPresenter()
   private var menuIsOpen = false
-  private var latestSnapshot = SensorDisplaySnapshot()
-  private var historyPoints = Array(
-    repeating: rasitop_history_point(),
-    count: Int(rasitop_history_capacity)
-  )
-  private var historyCount = 0
-  private var coreSamples = Array(
-    repeating: CPUComponentDisplaySample(),
-    count: Int(rasitop_max_logical_cpus)
-  )
-  private var coreCount = 0
 
   override init() {
     super.init()
@@ -47,7 +44,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     menu.delegate = self
 
     let summaryItem = NSMenuItem()
-    summaryItem.view = summaryView
+    summaryItem.view = summaryPresenter.view
     menu.addItem(summaryItem)
     menu.addItem(.separator())
 
@@ -60,7 +57,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     quitItem.target = NSApp
     menu.addItem(quitItem)
 
-    resizeSummaryView()
+    summaryPresenter.resizeView()
   }
 
   var isShown: Bool {
@@ -74,6 +71,46 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
   func update(
     from snapshot: inout rasitop_engine_snapshot,
     history: UnsafeBufferPointer<rasitop_history_point>?
+  ) {
+    summaryPresenter.update(
+      from: &snapshot,
+      history: history,
+      render: isShown
+    )
+  }
+
+  func menuWillOpen(_ menu: NSMenu) {
+    menuIsOpen = true
+    summaryPresenter.render()
+    visibilityDidChange?(true)
+  }
+
+  func menuDidClose(_ menu: NSMenu) {
+    menuIsOpen = false
+    visibilityDidChange?(false)
+  }
+}
+
+@MainActor
+private final class SensorSummaryPresenter {
+  let view = SensorSummaryView()
+
+  private var latestSnapshot = SensorDisplaySnapshot()
+  private var historyPoints = Array(
+    repeating: rasitop_history_point(),
+    count: Int(rasitop_history_capacity)
+  )
+  private var historyCount = 0
+  private var coreSamples = Array(
+    repeating: CPUComponentDisplaySample(),
+    count: Int(rasitop_max_logical_cpus)
+  )
+  private var coreCount = 0
+
+  func update(
+    from snapshot: inout rasitop_engine_snapshot,
+    history: UnsafeBufferPointer<rasitop_history_point>?,
+    render shouldRender: Bool
   ) {
     latestSnapshot = SensorDisplaySnapshot(
       cpuRatio: clamped(snapshot.aggregate.total_ratio),
@@ -109,26 +146,15 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         historyPoints[index] = history[index]
       }
     }
-    if isShown {
-      updateVisibleContent()
+    if shouldRender {
+      render()
     }
   }
 
-  func menuWillOpen(_ menu: NSMenu) {
-    menuIsOpen = true
-    updateVisibleContent()
-    visibilityDidChange?(true)
-  }
-
-  func menuDidClose(_ menu: NSMenu) {
-    menuIsOpen = false
-    visibilityDidChange?(false)
-  }
-
-  private func updateVisibleContent() {
+  func render() {
     historyPoints.withUnsafeBufferPointer { historyBuffer in
       coreSamples.withUnsafeBufferPointer { coreBuffer in
-        summaryView.update(
+        view.update(
           with: latestSnapshot,
           history: UnsafeBufferPointer(
             start: historyBuffer.baseAddress,
@@ -141,13 +167,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         )
       }
     }
-    resizeSummaryView()
+    resizeView()
   }
 
-  private func resizeSummaryView() {
-    summaryView.frame.size = NSSize(
+  func resizeView() {
+    view.frame.size = NSSize(
       width: SensorSummaryView.width,
-      height: summaryView.preferredHeight
+      height: view.preferredHeight
     )
   }
 
@@ -157,6 +183,56 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
   private func clamped(_ ratio: Double) -> Double {
     ratio.isFinite ? min(max(ratio, 0), 1) : 0
+  }
+}
+
+@MainActor
+final class SensorSummaryPreviewWindowController: NSWindowController, SensorDetailsConsumer {
+  private let summaryPresenter: SensorSummaryPresenter
+
+  init() {
+    let summaryPresenter = SensorSummaryPresenter()
+    summaryPresenter.resizeView()
+    self.summaryPresenter = summaryPresenter
+
+    let summaryView = summaryPresenter.view
+    let backgroundView = NSVisualEffectView(frame: summaryView.frame)
+    backgroundView.material = .menu
+    backgroundView.blendingMode = .behindWindow
+    backgroundView.state = .active
+    summaryView.autoresizingMask = [.width, .height]
+    backgroundView.addSubview(summaryView)
+
+    let window = NSWindow(
+      contentRect: backgroundView.frame,
+      styleMask: [.titled, .closable, .miniaturizable],
+      backing: .buffered,
+      defer: false
+    )
+    window.title = "rasitop UI Preview"
+    window.identifier = NSUserInterfaceItemIdentifier("rasitop-ui-preview")
+    window.isReleasedWhenClosed = false
+    window.contentView = backgroundView
+    window.center()
+
+    super.init(window: window)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) is not supported")
+  }
+
+  func update(
+    from snapshot: inout rasitop_engine_snapshot,
+    history: UnsafeBufferPointer<rasitop_history_point>?
+  ) {
+    summaryPresenter.update(
+      from: &snapshot,
+      history: history,
+      render: true
+    )
+    window?.setContentSize(summaryPresenter.view.frame.size)
   }
 }
 
