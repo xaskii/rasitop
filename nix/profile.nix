@@ -1,6 +1,7 @@
 {
   cargoInstruments,
   libxml2,
+  python3,
   rustToolchain,
   writeShellApplication,
 }:
@@ -10,6 +11,7 @@ writeShellApplication {
   runtimeInputs = [
     cargoInstruments
     libxml2
+    python3
     rustToolchain
   ];
   text = ''
@@ -159,7 +161,7 @@ writeShellApplication {
       local summary="''${ACTIVITY_SUMMARY_OUTPUT:-$output_dir/rasitop-app-activity-$run_id.json}"
       local app_log="''${ACTIVITY_APP_LOG:-$output_dir/rasitop-app-activity-$run_id.log}"
       local app_executable="$repo_root/target/release/rasitop.app/Contents/MacOS/rasitop"
-      local summary_executable="$repo_root/target/release/rasitop-activity-summary"
+      local summary_script="$repo_root/scripts/activity_summary.py"
       local app_lifetime_seconds=$((warmup_seconds + duration_seconds + 30))
 
       for path in "$trace" "$export_xml" "$summary" "$app_log"; do
@@ -173,10 +175,9 @@ writeShellApplication {
       cargo build \
         --release \
         --target-dir "$repo_root/target" \
-        --bin rasitop-app \
-        --bin rasitop-activity-summary >&2
-      if [[ ! -x "$app_executable" || ! -x "$summary_executable" ]]; then
-        echo "release app or Activity Monitor summarizer was not built" >&2
+        --bin rasitop-app >&2
+      if [[ ! -x "$app_executable" || ! -f "$summary_script" ]]; then
+        echo "release app or Activity Monitor summarizer is missing" >&2
         exit 1
       fi
 
@@ -225,7 +226,7 @@ writeShellApplication {
         exit 1
       fi
 
-      "$summary_executable" "$export_xml" >"$activity_summary_tmp"
+      "${python3}/bin/python3" "$summary_script" "$export_xml" >"$activity_summary_tmp"
       mv "$activity_summary_tmp" "$summary"
       activity_summary_tmp=""
 

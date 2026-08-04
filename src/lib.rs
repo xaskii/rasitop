@@ -1,7 +1,6 @@
 #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
 compile_error!("rasitop supports Apple silicon Macs only");
 
-pub mod activity;
 pub mod cpu;
 pub mod engine;
 pub mod ffi;
