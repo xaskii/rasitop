@@ -99,6 +99,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate, SensorDetailsConsume
 @MainActor
 private final class SensorSummaryPresenter {
   let view = SensorSummaryView()
+  private let viewWidth: CGFloat
 
   private var latestSnapshot = SensorDisplaySnapshot()
   private var historyPoints = Array(
@@ -116,6 +117,10 @@ private final class SensorSummaryPresenter {
     count: Int(rasitop_max_logical_cpus)
   )
   private var coreCount = 0
+
+  init(viewWidth: CGFloat = SensorSummaryView.width) {
+    self.viewWidth = viewWidth
+  }
 
   func update(
     from snapshot: inout rasitop_engine_snapshot,
@@ -199,7 +204,7 @@ private final class SensorSummaryPresenter {
 
   func resizeView() {
     let size = NSSize(
-      width: SensorSummaryView.width,
+      width: viewWidth,
       height: view.preferredHeight
     )
     if view.frame.size != size {
@@ -221,7 +226,7 @@ final class SensorSummaryPreviewWindowController: NSWindowController, SensorDeta
   private let summaryPresenter: SensorSummaryPresenter
 
   init() {
-    let summaryPresenter = SensorSummaryPresenter()
+    let summaryPresenter = SensorSummaryPresenter(viewWidth: 320)
     summaryPresenter.resizeView()
     self.summaryPresenter = summaryPresenter
 
@@ -230,7 +235,6 @@ final class SensorSummaryPreviewWindowController: NSWindowController, SensorDeta
     backgroundView.material = .menu
     backgroundView.blendingMode = .behindWindow
     backgroundView.state = .active
-    summaryView.autoresizingMask = [.width, .height]
     backgroundView.addSubview(summaryView)
 
     let window = NSWindow(
@@ -267,10 +271,8 @@ final class SensorSummaryPreviewWindowController: NSWindowController, SensorDeta
     let size = summaryPresenter.view.frame.size
     if window?.contentView?.frame.size != size {
       window?.setContentSize(size)
-      if let bounds = window?.contentView?.bounds {
-        summaryPresenter.view.frame = bounds
-      }
     }
+    summaryPresenter.view.frame = NSRect(origin: .zero, size: size)
   }
 }
 
@@ -279,6 +281,7 @@ private final class SensorSummaryView: NSView {
   static let width = 264.0
 
   private let historyView = CPUHistoryView()
+  private let cpuValueLabel = NSTextField(labelWithString: "—")
   private let gpuHistoryView = GPUHistoryView()
   private let gpuValueLabel = NSTextField(labelWithString: "—")
   private let gpuStack = NSStackView()
@@ -293,11 +296,21 @@ private final class SensorSummaryView: NSView {
   init() {
     super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: 252))
 
-    let historyLabel = NSTextField(labelWithString: "HISTORY")
+    let historyLabel = NSTextField(labelWithString: "CPU")
     historyLabel.font = .systemFont(ofSize: 9, weight: .semibold)
     historyLabel.textColor = .secondaryLabelColor
 
-    let historyStack = NSStackView(views: [historyLabel, historyView])
+    let historySpacer = NSView()
+    historySpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    cpuValueLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+    cpuValueLabel.textColor = .secondaryLabelColor
+    let historyHeader = NSStackView(
+      views: [historyLabel, historySpacer, cpuValueLabel]
+    )
+    historyHeader.orientation = .horizontal
+    historyHeader.alignment = .centerY
+
+    let historyStack = NSStackView(views: [historyHeader, historyView])
     historyStack.orientation = .vertical
     historyStack.alignment = .width
     historyStack.spacing = 5
@@ -374,7 +387,7 @@ private final class SensorSummaryView: NSView {
       contentStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
       historyStack.heightAnchor.constraint(equalToConstant: 81),
       historyStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-      historyLabel.widthAnchor.constraint(equalTo: historyStack.widthAnchor),
+      historyHeader.widthAnchor.constraint(equalTo: historyStack.widthAnchor),
       historyView.heightAnchor.constraint(equalToConstant: 65),
       historyView.widthAnchor.constraint(equalTo: historyStack.widthAnchor),
       gpuStack.heightAnchor.constraint(equalToConstant: 57),
@@ -404,6 +417,10 @@ private final class SensorSummaryView: NSView {
     cores: UnsafeBufferPointer<CPUComponentDisplaySample>
   ) {
     historyView.update(history)
+    cpuValueLabel.stringValue = String(
+      format: "%.0f%%",
+      snapshot.cpuRatio * 100
+    )
     gpuStack.isHidden = !snapshot.gpuSupported
     if snapshot.gpuSupported {
       gpuHistoryView.update(gpuHistory)

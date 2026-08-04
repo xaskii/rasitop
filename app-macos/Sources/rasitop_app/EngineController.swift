@@ -30,7 +30,6 @@ final class EngineController: NSObject {
     count: Int(rasitop_gpu_history_capacity)
   )
   private var sensorTicksRemaining = 0
-  private var gpuTicksRemaining = 0
   private var sensorDetailsVisible = false
 
   init(
@@ -95,7 +94,6 @@ final class EngineController: NSObject {
       NSLog("rasitop CPU baseline reset failed with status %d", status)
     }
     sensorTicksRemaining = 0
-    gpuTicksRemaining = 0
     start()
   }
 
@@ -119,12 +117,7 @@ final class EngineController: NSObject {
     } else {
       sensorTicksRemaining -= 1
     }
-    if gpuTicksRemaining == 0 {
-      requestFlags |= UInt32(rasitop_request_gpu)
-      gpuTicksRemaining = 1
-    } else {
-      gpuTicksRemaining -= 1
-    }
+    requestFlags |= UInt32(rasitop_request_gpu)
 
     let status = rasitop_engine_sample(
       engine,

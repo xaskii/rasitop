@@ -485,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn gpu_history_is_bounded_to_three_minutes_and_preserves_gaps() {
+    fn gpu_history_keeps_ninety_one_second_samples_and_preserves_gaps() {
         let mut history: HistoryBuffer<GPU_HISTORY_CAPACITY> = HistoryBuffer::default();
         for value in 1..=GPU_HISTORY_CAPACITY {
             history.push(HistoryPoint {

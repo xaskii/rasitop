@@ -128,7 +128,7 @@ struct GpuDecodeArgs {
 #[derive(Debug, Args)]
 struct GpuProviderArgs {
     /// Time between provider samples after the initial baseline.
-    #[arg(long, default_value = "2s", value_parser = humantime::parse_duration)]
+    #[arg(long, default_value = "1s", value_parser = humantime::parse_duration)]
     interval: Duration,
 
     /// Number of provider calls, including the initial gap.

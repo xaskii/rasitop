@@ -10,7 +10,7 @@ use crate::cpu::PerCoreSample;
 use crate::engine::{CpuEngine, EngineSnapshot, SampleRequest};
 
 const SCHEMA_VERSION: u8 = 2;
-const GPU_INTERVAL: Duration = Duration::from_secs(2);
+const GPU_INTERVAL: Duration = Duration::from_secs(1);
 const CSV_HEADER: [&str; 20] = [
     "schema_version",
     "sequence",
@@ -362,8 +362,8 @@ mod tests {
     #[test]
     fn gpu_cadence_uses_existing_deadlines_without_catch_up_bursts() {
         let start = Instant::now();
-        let mut next_gpu = start + Duration::from_secs(2);
-        assert!(!gpu_sample_due(
+        let mut next_gpu = start + Duration::from_secs(1);
+        assert!(gpu_sample_due(
             start + Duration::from_secs(1),
             &mut next_gpu
         ));
@@ -371,7 +371,7 @@ mod tests {
             start + Duration::from_secs(2),
             &mut next_gpu
         ));
-        assert!(!gpu_sample_due(
+        assert!(gpu_sample_due(
             start + Duration::from_secs(3),
             &mut next_gpu
         ));

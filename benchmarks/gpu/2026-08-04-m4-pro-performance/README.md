@@ -11,7 +11,7 @@ The command exercises the real IOReport subscription. It does not run a GPU
 workload. Construction and the first baseline are reported separately from the
 recurring path. The recurring sample gate requires zero Rust heap allocations,
 p95 latency no greater than 2.5 ms, and every sample below 5 ms. Those limits
-leave measured headroom at the production two-second cadence without introducing
+leave measured headroom at the production one-second cadence without introducing
 adaptive behavior.
 
 IOReport subscription creation is denied inside the Codex filesystem sandbox,
