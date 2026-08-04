@@ -21,9 +21,9 @@ check:
 
 # Run the focused unsafe-boundary checks under Miri.
 miri:
-    cargo +nightly miri test --lib ffi::tests
-    cargo +nightly miri test --lib gpu::tests
-    cargo +nightly miri test --lib ioreport::tests
+    cargo miri test --lib ffi::tests
+    cargo miri test --lib gpu::tests
+    cargo miri test --lib ioreport::tests
 
 # Open the release app's live-data preview for a bounded number of seconds.
 preview seconds="30": release

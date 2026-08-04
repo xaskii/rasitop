@@ -16,8 +16,10 @@ and `jj commit`.
 - Build with `just build` (use `just release` for release).
 - Format, lint, and test with `just check`.
 - Raw Cargo commands remain supported when a narrower check is useful.
+- The pinned nightly toolchain enables the experimental `-Zpolonius=next`
+  borrow checker for all Cargo builds.
 - Validate the unsafe FFI boundary with
-  `cargo +nightly miri test --lib ffi::tests`.
+  `cargo miri test --lib ffi::tests`.
 
 ## Runtime Checks
 
