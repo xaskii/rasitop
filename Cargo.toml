@@ -22,6 +22,10 @@ serde = { version = "1.0.210", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
 
+[features]
+# Enables allocation accounting in the real-hardware GPU diagnostics harness.
+gpu-profiling = []
+
 # Keep optimized code while retaining what sampling profilers need for inline
 # stacks, source locations, and symbol names. This mirrors the profiling
 # profiles used by Ruff and uv.

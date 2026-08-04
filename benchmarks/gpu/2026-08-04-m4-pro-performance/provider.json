@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "machine_model": "Mac16,8",
+  "os_build": "26A5388g",
+  "interval_ms": 100,
+  "recurring_samples": 100,
+  "construction_us": 119226,
+  "construction_allocations": 23896,
+  "baseline_us": 718,
+  "baseline_allocations": 40,
+  "warm_sample_us": {
+    "p50": 1383,
+    "p95": 1810,
+    "p99": 2032,
+    "max": 2077
+  },
+  "warm_sample_allocations_max": 0,
+  "regression_gate": {
+    "p95_us_max": 2500,
+    "single_sample_us_max": 5000,
+    "allocations_max": 0,
+    "passed": true
+  }
+}
