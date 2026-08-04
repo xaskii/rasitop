@@ -1,6 +1,6 @@
 # rasitop
 
-<img src="docs/assets/rasitop-menu-bar.png" alt="rasitop menu bar performance monitor" width="320">
+<img src="docs/assets/rasitop-menu-bar-gpu.png" alt="rasitop menu bar CPU and GPU performance monitor" width="320">
 
 rasitop is a low-overhead macOS menu bar monitor for Apple Silicon. A Rust
 sampling engine reads CPU, GPU, temperature, fan, and power telemetry; a compact
