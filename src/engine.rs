@@ -525,11 +525,17 @@ mod tests {
             .expect("warm aggregate engine");
         std::thread::sleep(Duration::from_millis(50));
 
-        let (sample, allocations) = crate::test_allocator::count_allocations(|| {
-            engine
-                .sample(SampleRequest::NONE)
-                .map(|snapshot| snapshot.is_some())
-        });
+        let (sample, allocations) =
+            crate::test_allocator::count_allocations(|| -> super::Result<bool> {
+                let deadline = Instant::now() + Duration::from_secs(1);
+                loop {
+                    match engine.sample(SampleRequest::NONE)? {
+                        Some(_) => break Ok(true),
+                        None if Instant::now() < deadline => std::thread::yield_now(),
+                        None => break Ok(false),
+                    }
+                }
+            });
 
         running.store(false, Ordering::Relaxed);
         worker.join().expect("stop CPU workload");
