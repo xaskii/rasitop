@@ -10,7 +10,7 @@ extern "C" {
 
 #define rasitop_max_logical_cpus 64
 #define rasitop_history_capacity 180
-#define rasitop_gpu_history_capacity 90
+#define rasitop_gpu_history_capacity rasitop_history_capacity
 
 #define rasitop_ok 0
 #define rasitop_sample_ready 1

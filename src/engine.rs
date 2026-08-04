@@ -11,7 +11,7 @@ use crate::smc::{SensorSample, SmcError, SmcProvider};
 
 pub const MAX_LOGICAL_CPUS: usize = 64;
 pub const HISTORY_CAPACITY: usize = 180;
-pub const GPU_HISTORY_CAPACITY: usize = 90;
+pub const GPU_HISTORY_CAPACITY: usize = HISTORY_CAPACITY;
 pub const REQUEST_PER_CORE: u32 = 1 << 0;
 pub const REQUEST_SENSORS: u32 = 1 << 1;
 pub const REQUEST_GPU: u32 = 1 << 2;
@@ -485,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn gpu_history_keeps_ninety_one_second_samples_and_preserves_gaps() {
+    fn gpu_history_matches_the_three_minute_cpu_window_and_preserves_gaps() {
         let mut history: HistoryBuffer<GPU_HISTORY_CAPACITY> = HistoryBuffer::default();
         for value in 1..=GPU_HISTORY_CAPACITY {
             history.push(HistoryPoint {
@@ -494,13 +494,13 @@ mod tests {
             });
         }
         history.push(HistoryPoint {
-            monotonic_ns: 91,
+            monotonic_ns: 181,
             total_ratio: f64::NAN,
         });
         let mut points = [HistoryPoint::default(); GPU_HISTORY_CAPACITY];
         assert_eq!(history.copy_into(&mut points), GPU_HISTORY_CAPACITY);
         assert_eq!(points[0].monotonic_ns, 2);
-        assert_eq!(points[GPU_HISTORY_CAPACITY - 1].monotonic_ns, 91);
+        assert_eq!(points[GPU_HISTORY_CAPACITY - 1].monotonic_ns, 181);
         assert!(points[GPU_HISTORY_CAPACITY - 1].total_ratio.is_nan());
     }
 
