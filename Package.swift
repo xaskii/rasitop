@@ -10,11 +10,11 @@ let package = Package(
   targets: [
     .target(
       name: "rasitop_app",
-      path: "app-macos/Sources/rasitop_app",
+      path: "app/Sources/rasitop_app",
       swiftSettings: [
         .unsafeFlags([
           "-import-objc-header",
-          "app-macos/include/rasitop.h",
+          "app/include/rasitop.h",
         ])
       ]
     )

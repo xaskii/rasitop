@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 fn main() {
-    println!("cargo::rerun-if-changed=app-macos/rasitop-info.plist");
-    println!("cargo::rerun-if-changed=app-macos/include/rasitop.h");
-    println!("cargo::rerun-if-changed=app-macos/Resources/rasitop.icns");
-    println!("cargo::rerun-if-changed=app-macos/Sources/rasitop_app");
+    println!("cargo::rerun-if-changed=app/Info.plist");
+    println!("cargo::rerun-if-changed=app/include/rasitop.h");
+    println!("cargo::rerun-if-changed=app/Resources/rasitop.icns");
+    println!("cargo::rerun-if-changed=app/Sources/rasitop_app");
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
@@ -32,7 +32,7 @@ fn build_swift_app() -> Result<(), String> {
     let swift_library = out_dir.join("librasitop_swift.a");
     fs::create_dir_all(&module_cache).map_err(display_error)?;
 
-    let mut sources = swift_sources(&root.join("app-macos/Sources/rasitop_app"))?;
+    let mut sources = swift_sources(&root.join("app/Sources/rasitop_app"))?;
     sources.sort();
 
     let mut command = Command::new(swiftc);
@@ -48,7 +48,7 @@ fn build_swift_app() -> Result<(), String> {
         .arg("-module-cache-path")
         .arg(&module_cache)
         .arg("-import-objc-header")
-        .arg(root.join("app-macos/include/rasitop.h"));
+        .arg(root.join("app/include/rasitop.h"));
 
     if opt_level == "0" {
         command.arg("-Onone");
@@ -82,13 +82,9 @@ fn assemble_bundle(root: &Path, out_dir: &Path) -> Result<(), String> {
 
     fs::create_dir_all(&macos).map_err(display_error)?;
     fs::create_dir_all(&resources).map_err(display_error)?;
+    fs::copy(root.join("app/Info.plist"), contents.join("Info.plist")).map_err(display_error)?;
     fs::copy(
-        root.join("app-macos/rasitop-info.plist"),
-        contents.join("Info.plist"),
-    )
-    .map_err(display_error)?;
-    fs::copy(
-        root.join("app-macos/Resources/rasitop.icns"),
+        root.join("app/Resources/rasitop.icns"),
         resources.join("rasitop.icns"),
     )
     .map_err(display_error)?;

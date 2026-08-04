@@ -1,4 +1,7 @@
 /target
+/build
+/tools/*/target
 .venv/
 __pycache__/
 *.trace
+.DS_Store

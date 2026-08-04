@@ -18,7 +18,7 @@ check:
     cargo clippy --all-targets --all-features -- -D warnings
     cargo nextest run
     PYTHONPATH=scripts python3 -m unittest -v scripts.tests.test_activity_summary
-    xcrun swift-format lint --recursive app-macos/Sources/rasitop_app
+    xcrun swift-format lint --recursive app/Sources/rasitop_app
 
 # Run the focused unsafe-boundary checks under Miri.
 miri:
