@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
+use serde::Serialize;
 
 use rasitop::measure::{self, MeasureMode, MeasureOptions};
 use rasitop::record::{self, RecordOptions};
@@ -53,6 +54,9 @@ enum GpuCommand {
 
     /// Decode an existing raw residency capture using the exact local catalog.
     Decode(GpuDecodeArgs),
+
+    /// Exercise the narrow provider lifecycle without engine integration.
+    Provider(GpuProviderArgs),
 }
 
 #[derive(Debug, Args)]
@@ -113,6 +117,29 @@ struct GpuDecodeArgs {
     /// Write decoded CSV diagnostics to this path instead of stdout.
     #[arg(long, value_name = "PATH")]
     output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct GpuProviderArgs {
+    /// Time between provider samples after the initial baseline.
+    #[arg(long, default_value = "2s", value_parser = humantime::parse_duration)]
+    interval: Duration,
+
+    /// Number of provider calls, including the initial gap.
+    #[arg(long, default_value_t = 4)]
+    count: u64,
+
+    /// Write lifecycle CSV diagnostics to this path instead of stdout.
+    #[arg(long, value_name = "PATH")]
+    output: Option<PathBuf>,
+}
+
+#[derive(Debug, Serialize)]
+struct GpuProviderRow {
+    sequence: u64,
+    status: &'static str,
+    interval_ms: Option<u64>,
+    gpu_busy_ratio: Option<f64>,
 }
 
 #[derive(Debug, Args)]
@@ -328,6 +355,42 @@ fn run() -> Result<()> {
             };
             gpu::write_csv(BufWriter::new(writer), &samples)
                 .context("write validated GPU residency")
+        }
+        Command::Gpu(GpuArgs {
+            command: GpuCommand::Provider(args),
+        }) => {
+            anyhow::ensure!(
+                !args.interval.is_zero(),
+                "GPU provider interval must be non-zero"
+            );
+            anyhow::ensure!(args.count != 0, "GPU provider count must be non-zero");
+            let discovery = gpu::GpuProvider::discover().context("discover GPU provider")?;
+            let mut provider =
+                gpu::GpuProvider::new(discovery.catalog).context("initialize GPU provider")?;
+            let writer: Box<dyn Write> = match args.output {
+                Some(path) => {
+                    let file = File::create(&path).with_context(|| {
+                        format!("create GPU provider diagnostics at {}", path.display())
+                    })?;
+                    Box::new(file)
+                }
+                None => Box::new(io::stdout()),
+            };
+            let mut csv = csv::Writer::from_writer(BufWriter::new(writer));
+            for sequence in 0..args.count {
+                if sequence != 0 {
+                    std::thread::sleep(args.interval);
+                }
+                let sample = provider.sample().context("sample GPU provider")?;
+                csv.serialize(GpuProviderRow {
+                    sequence,
+                    status: if sample.is_some() { "sample" } else { "gap" },
+                    interval_ms: sample
+                        .map(|sample| sample.interval.as_millis().try_into().unwrap_or(u64::MAX)),
+                    gpu_busy_ratio: sample.map(|sample| sample.busy_ratio),
+                })?;
+            }
+            csv.flush().context("finish GPU provider diagnostics")
         }
     }
 }

@@ -48,6 +48,25 @@ pub enum IoReportError {
         subgroup: String,
         channel: String,
     },
+    #[error("IOReport channel {channel:?} has unit {actual:?}; expected {expected:?}")]
+    UnitMismatch {
+        channel: String,
+        expected: String,
+        actual: String,
+    },
+    #[error("IOReport channel {channel:?} has {actual} states; expected {expected}")]
+    StateCountMismatch {
+        channel: String,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("IOReport channel {channel:?} state {index} is {actual:?}; expected {expected:?}")]
+    StateNameMismatch {
+        channel: String,
+        index: usize,
+        expected: String,
+        actual: String,
+    },
     #[error("residency for state {index} of channel {channel:?} was negative: {value}")]
     NegativeResidency {
         channel: String,
@@ -98,6 +117,40 @@ pub struct ResidencyRecord {
     pub residency_ticks: u64,
     pub total_ticks: u64,
     pub state_ratio: Option<f64>,
+}
+
+pub(crate) const MAX_STATE_COUNT: usize = 32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RawResidencyDelta {
+    pub state_count: usize,
+    pub residency_ticks: [u64; MAX_STATE_COUNT],
+    pub total_ticks: u64,
+    pub interval: Duration,
+}
+
+pub(crate) struct StateResidencySampler {
+    inner: platform::ProviderSampler,
+}
+
+impl StateResidencySampler {
+    pub(crate) fn new(
+        selector: &ResidencySelector,
+        unit: &str,
+        states: &[&str],
+    ) -> Result<Self, IoReportError> {
+        Ok(Self {
+            inner: platform::ProviderSampler::new(selector, unit, states)?,
+        })
+    }
+
+    pub(crate) fn sample(&mut self) -> Result<Option<RawResidencyDelta>, IoReportError> {
+        self.inner.sample()
+    }
+
+    pub(crate) fn reset_baseline(&mut self) {
+        self.inner.reset_baseline();
+    }
 }
 
 pub fn discover() -> Result<Vec<ChannelRecord>, IoReportError> {
@@ -298,16 +351,17 @@ mod platform {
     struct SamplingSession<'a> {
         selector: &'a ResidencySelector,
         baseline: OwnedCf,
+        objects: SubscriptionObjects,
+    }
+
+    struct SubscriptionObjects {
         subscription: OwnedCf,
         subscribed_channels: Option<OwnedCf>,
         channels: OwnedCf,
     }
 
-    impl<'a> SamplingSession<'a> {
-        fn new(selector: &'a ResidencySelector) -> Result<Self, IoReportError> {
-            // Discovery deliberately subscribes to the copied inventory and
-            // filters only after sampling. Narrow subscriptions belong to the
-            // later provider revision, once this capture validates a layout.
+    impl SubscriptionObjects {
+        fn new(selector: &ResidencySelector) -> Result<Self, IoReportError> {
             let copied_channels = unsafe { OwnedCf::from_copy(io_report_copy_all_channels(0, 0)) }
                 .ok_or_else(|| IoReportError::MissingChannelGroup {
                     group: selector.group.clone(),
@@ -317,7 +371,6 @@ mod platform {
                 cf_dictionary_get_type_id()
             })
             .ok_or(IoReportError::InvalidChannelDictionary)?;
-            // IOReportCreateSubscription mutates its channel selection.
             let channels = unsafe {
                 OwnedCf::from_copy(cf_dictionary_create_mutable_copy(
                     std::ptr::null(),
@@ -329,8 +382,6 @@ mod platform {
             retain_only_channel(channels.as_ptr(), selector)?;
 
             let mut subscribed_channels = std::ptr::null();
-            // SAFETY: `channels` is a live copied channel dictionary and the
-            // out-pointer is initialized. A non-null return is a +1 object.
             let subscription = unsafe {
                 OwnedCf::from_copy(io_report_create_subscription(
                     std::ptr::null(),
@@ -341,27 +392,38 @@ mod platform {
                 ))
             }
             .ok_or(IoReportError::SubscriptionFailed)?;
-            // IOReport writes a separate +1 channel dictionary on systems that
-            // need to adjust the selection. Keep it alive for the subscription.
             let subscribed_channels = unsafe { OwnedCf::from_copy(subscribed_channels) };
-            let sample_channels = subscribed_channels
+            Ok(Self {
+                subscription,
+                subscribed_channels,
+                channels,
+            })
+        }
+
+        fn sample(&self) -> Result<OwnedCf, IoReportError> {
+            let sample_channels = self
+                .subscribed_channels
                 .as_ref()
-                .map_or(channels.as_ptr(), OwnedCf::as_ptr);
-            // SAFETY: Subscription and its channel dictionary remain live.
-            let baseline = unsafe {
+                .map_or(self.channels.as_ptr(), OwnedCf::as_ptr);
+            unsafe {
                 OwnedCf::from_copy(io_report_create_samples(
-                    subscription.as_ptr(),
+                    self.subscription.as_ptr(),
                     sample_channels,
                     std::ptr::null(),
                 ))
             }
-            .ok_or(IoReportError::SampleFailed)?;
+            .ok_or(IoReportError::SampleFailed)
+        }
+    }
+
+    impl<'a> SamplingSession<'a> {
+        fn new(selector: &'a ResidencySelector) -> Result<Self, IoReportError> {
+            let objects = SubscriptionObjects::new(selector)?;
+            let baseline = objects.sample()?;
             Ok(Self {
                 selector,
                 baseline,
-                subscription,
-                subscribed_channels,
-                channels,
+                objects,
             })
         }
 
@@ -371,19 +433,7 @@ mod platform {
             elapsed: Duration,
             sample_started: Instant,
         ) -> Result<Vec<ResidencyRecord>, IoReportError> {
-            let sample_channels = self
-                .subscribed_channels
-                .as_ref()
-                .map_or(self.channels.as_ptr(), OwnedCf::as_ptr);
-            // SAFETY: The subscription and channel dictionary are owned by self.
-            let next = unsafe {
-                OwnedCf::from_copy(io_report_create_samples(
-                    self.subscription.as_ptr(),
-                    sample_channels,
-                    std::ptr::null(),
-                ))
-            }
-            .ok_or(IoReportError::SampleFailed)?;
+            let next = self.objects.sample()?;
             // SAFETY: Both sample dictionaries are live for this call.
             let delta = unsafe {
                 OwnedCf::from_copy(io_report_create_samples_delta(
@@ -402,6 +452,175 @@ mod platform {
                 sample_started.elapsed(),
             )
         }
+    }
+
+    pub(super) struct ProviderSampler {
+        selector: ResidencySelector,
+        unit: String,
+        states: Vec<String>,
+        baseline: Option<(OwnedCf, Instant)>,
+        objects: SubscriptionObjects,
+    }
+
+    impl ProviderSampler {
+        pub(super) fn new(
+            selector: &ResidencySelector,
+            unit: &str,
+            states: &[&str],
+        ) -> Result<Self, IoReportError> {
+            if states.len() > MAX_STATE_COUNT {
+                return Err(IoReportError::StateCountMismatch {
+                    channel: selector.channel.clone(),
+                    expected: MAX_STATE_COUNT,
+                    actual: states.len(),
+                });
+            }
+            Ok(Self {
+                selector: selector.clone(),
+                unit: unit.into(),
+                states: states.iter().map(|state| (*state).into()).collect(),
+                baseline: None,
+                objects: SubscriptionObjects::new(selector)?,
+            })
+        }
+
+        pub(super) fn sample(&mut self) -> Result<Option<RawResidencyDelta>, IoReportError> {
+            let result = self.sample_inner();
+            if result.is_err() {
+                self.baseline = None;
+            }
+            result
+        }
+
+        fn sample_inner(&mut self) -> Result<Option<RawResidencyDelta>, IoReportError> {
+            let next = self.objects.sample()?;
+            let sampled_at = Instant::now();
+            let Some((baseline, baseline_at)) = self.baseline.take() else {
+                validate_sample_layout(next.as_ptr(), &self.selector, &self.unit, &self.states)?;
+                self.baseline = Some((next, sampled_at));
+                return Ok(None);
+            };
+            let delta = unsafe {
+                OwnedCf::from_copy(io_report_create_samples_delta(
+                    baseline.as_ptr(),
+                    next.as_ptr(),
+                    std::ptr::null(),
+                ))
+            }
+            .ok_or(IoReportError::DeltaFailed)?;
+            let decoded = decode_fixed_delta(
+                delta.as_ptr(),
+                &self.selector.channel,
+                self.states.len(),
+                sampled_at.saturating_duration_since(baseline_at),
+            )?;
+            self.baseline = Some((next, sampled_at));
+            Ok(Some(decoded))
+        }
+
+        pub(super) fn reset_baseline(&mut self) {
+            self.baseline = None;
+        }
+    }
+
+    fn selected_channel(sample: CfDictionaryRef) -> Result<CfDictionaryRef, IoReportError> {
+        let channels = dictionary_value(sample, CHANNELS_KEY)
+            .and_then(|value| checked_type(value, unsafe { cf_array_get_type_id() }))
+            .ok_or(IoReportError::InvalidChannelList)?;
+        if unsafe { cf_array_get_count(channels) } != 1 {
+            return Err(IoReportError::InvalidChannelList);
+        }
+        let channel = unsafe { cf_array_get_value_at_index(channels, 0) };
+        checked_type(channel, unsafe { cf_dictionary_get_type_id() })
+            .ok_or(IoReportError::InvalidChannel { index: 0 })
+    }
+
+    fn validate_sample_layout(
+        sample: CfDictionaryRef,
+        selector: &ResidencySelector,
+        expected_unit: &str,
+        expected_states: &[String],
+    ) -> Result<(), IoReportError> {
+        let item = selected_channel(sample)?;
+        let group = string_or_empty(unsafe { io_report_channel_get_group(item) })?;
+        let subgroup = string_or_empty(unsafe { io_report_channel_get_sub_group(item) })?;
+        let channel = string_or_empty(unsafe { io_report_channel_get_channel_name(item) })?;
+        if group != selector.group || subgroup != selector.subgroup || channel != selector.channel {
+            return Err(IoReportError::MissingSampleChannel {
+                group: selector.group.clone(),
+                subgroup: selector.subgroup.clone(),
+                channel: selector.channel.clone(),
+            });
+        }
+        let unit = string_or_empty(unsafe { io_report_channel_get_unit_label(item) })?;
+        if unit != expected_unit {
+            return Err(IoReportError::UnitMismatch {
+                channel,
+                expected: expected_unit.into(),
+                actual: unit,
+            });
+        }
+        let count = unsafe { io_report_state_get_count(item) };
+        if count < 0 || count as usize != expected_states.len() {
+            return Err(IoReportError::StateCountMismatch {
+                channel,
+                expected: expected_states.len(),
+                actual: usize::try_from(count).unwrap_or(0),
+            });
+        }
+        for (index, expected) in expected_states.iter().enumerate() {
+            let actual =
+                string_or_empty(unsafe { io_report_state_get_name_for_index(item, index as i32) })?;
+            if actual != *expected {
+                return Err(IoReportError::StateNameMismatch {
+                    channel,
+                    index,
+                    expected: expected.clone(),
+                    actual,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn decode_fixed_delta(
+        delta: CfDictionaryRef,
+        channel: &str,
+        expected_states: usize,
+        interval: Duration,
+    ) -> Result<RawResidencyDelta, IoReportError> {
+        let item = selected_channel(delta)?;
+        let count = unsafe { io_report_state_get_count(item) };
+        if count < 0 || count as usize != expected_states {
+            return Err(IoReportError::StateCountMismatch {
+                channel: channel.into(),
+                expected: expected_states,
+                actual: usize::try_from(count).unwrap_or(0),
+            });
+        }
+        let mut residency_ticks = [0_u64; MAX_STATE_COUNT];
+        let mut total_ticks = 0_u64;
+        for (index, slot) in residency_ticks.iter_mut().enumerate().take(expected_states) {
+            let value = unsafe { io_report_state_get_residency(item, index as i32) };
+            let ticks = u64::try_from(value).map_err(|_| IoReportError::NegativeResidency {
+                channel: channel.into(),
+                index: index as u32,
+                value,
+            })?;
+            *slot = ticks;
+            total_ticks =
+                total_ticks
+                    .checked_add(ticks)
+                    .ok_or_else(|| IoReportError::ResidencyOverflow {
+                        channel: channel.into(),
+                    })?;
+        }
+        Ok(RawResidencyDelta {
+            state_count: expected_states,
+            residency_ticks,
+            total_ticks,
+            interval,
+        })
     }
 
     fn decode_residency_delta(
@@ -774,6 +993,24 @@ mod platform {
 #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
 mod platform {
     use super::*;
+
+    pub(super) struct ProviderSampler;
+
+    impl ProviderSampler {
+        pub(super) fn new(
+            _selector: &ResidencySelector,
+            _unit: &str,
+            _states: &[&str],
+        ) -> Result<Self, IoReportError> {
+            Err(IoReportError::MissingChannelDictionary)
+        }
+
+        pub(super) fn sample(&mut self) -> Result<Option<RawResidencyDelta>, IoReportError> {
+            Err(IoReportError::MissingChannelDictionary)
+        }
+
+        pub(super) fn reset_baseline(&mut self) {}
+    }
 
     pub(super) fn discover() -> Result<Vec<ChannelRecord>, IoReportError> {
         Err(IoReportError::MissingChannelDictionary)

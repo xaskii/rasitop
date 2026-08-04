@@ -8,7 +8,9 @@ use std::time::Duration;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::ioreport::{self, ResidencyRecord, ResidencySelector};
+use crate::ioreport::{
+    self, RawResidencyDelta, ResidencyRecord, ResidencySelector, StateResidencySampler,
+};
 
 pub const GPU_SCHEMA_VERSION: u32 = 1;
 
@@ -52,6 +54,23 @@ pub struct GpuDiagnosticSample {
     pub gpu_busy_ratio: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GpuSample {
+    pub busy_ratio: f64,
+    pub interval: Duration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GpuDiscovery {
+    pub catalog: &'static GpuCatalogEntry,
+    pub status: ValidationStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValidationStatus {
+    Validated,
+}
+
 #[derive(Debug, Error)]
 pub enum GpuError {
     #[error(
@@ -84,6 +103,12 @@ pub enum GpuError {
     MissingState { sequence: u64 },
     #[error("sequence {sequence} has inconsistent or overflowing residency totals")]
     InvalidTotal { sequence: u64 },
+    #[error("GPU residency delta has {actual} states; expected {expected}")]
+    ProviderStateCount { expected: usize, actual: usize },
+    #[error("GPU residency delta has zero total ticks")]
+    ProviderZeroTotal,
+    #[error("GPU residency delta produced an impossible busy ratio {ratio}")]
+    ProviderRatio { ratio: f64 },
     #[error("write GPU diagnostics: {0}")]
     Csv(#[from] csv::Error),
     #[error("flush GPU diagnostics: {0}")]
@@ -101,6 +126,91 @@ pub fn current_catalog() -> Result<&'static GpuCatalogEntry, GpuError> {
     catalog_for(&machine_model, &os_build).ok_or(GpuError::UnsupportedLayout {
         machine_model,
         os_build,
+    })
+}
+
+pub struct GpuProvider {
+    sampler: StateResidencySampler,
+    expected_states: usize,
+    idle_state_index: usize,
+}
+
+impl GpuProvider {
+    pub fn discover() -> Result<GpuDiscovery, GpuError> {
+        Ok(GpuDiscovery {
+            catalog: current_catalog()?,
+            status: ValidationStatus::Validated,
+        })
+    }
+
+    pub fn new(catalog: &'static GpuCatalogEntry) -> Result<Self, GpuError> {
+        let current = current_catalog()?;
+        if current != catalog {
+            return Err(GpuError::UnsupportedLayout {
+                machine_model: catalog.machine_model.into(),
+                os_build: catalog.os_build.into(),
+            });
+        }
+        let sampler = StateResidencySampler::new(
+            &ResidencySelector {
+                group: catalog.group.into(),
+                subgroup: catalog.subgroup.into(),
+                channel: catalog.channel.into(),
+            },
+            catalog.unit,
+            catalog.states,
+        )?;
+        Ok(Self {
+            sampler,
+            expected_states: catalog.states.len(),
+            idle_state_index: catalog.idle_state_index,
+        })
+    }
+
+    pub fn sample(&mut self) -> Result<Option<GpuSample>, GpuError> {
+        let delta = match self.sampler.sample() {
+            Ok(delta) => delta,
+            Err(error) => {
+                self.sampler.reset_baseline();
+                return Err(error.into());
+            }
+        };
+        delta
+            .map(|delta| decode_provider_delta(delta, self.expected_states, self.idle_state_index))
+            .transpose()
+    }
+
+    pub fn reset_baseline(&mut self) {
+        self.sampler.reset_baseline();
+    }
+}
+
+fn decode_provider_delta(
+    delta: RawResidencyDelta,
+    expected_states: usize,
+    idle_state_index: usize,
+) -> Result<GpuSample, GpuError> {
+    if delta.state_count != expected_states {
+        return Err(GpuError::ProviderStateCount {
+            expected: expected_states,
+            actual: delta.state_count,
+        });
+    }
+    if delta.total_ticks == 0 {
+        return Err(GpuError::ProviderZeroTotal);
+    }
+    let idle_ticks = delta.residency_ticks[idle_state_index];
+    let busy_ticks = delta
+        .total_ticks
+        .checked_sub(idle_ticks)
+        .ok_or(GpuError::ProviderRatio { ratio: f64::NAN })?;
+    let busy_ratio = busy_ticks as f64 / delta.total_ticks as f64;
+    if !busy_ratio.is_finite() || !(0.0..=1.0).contains(&busy_ratio) {
+        return Err(GpuError::ProviderRatio { ratio: busy_ratio });
+    }
+    Ok(GpuSample {
+        busy_ratio,
+        interval: delta.interval,
     })
 }
 
@@ -349,5 +459,39 @@ mod tests {
         assert!(catalog_for("Mac16,8", "26A5388g").is_some());
         assert!(catalog_for("Mac16,8", "future").is_none());
         assert!(catalog_for("Mac16,7", "26A5388g").is_none());
+    }
+
+    fn delta(idle: u64, busy: u64) -> RawResidencyDelta {
+        let mut residency_ticks = [0; ioreport::MAX_STATE_COUNT];
+        residency_ticks[0] = idle;
+        residency_ticks[1] = busy;
+        RawResidencyDelta {
+            state_count: M4_PRO_STATES.len(),
+            residency_ticks,
+            total_ticks: idle + busy,
+            interval: Duration::from_secs(2),
+        }
+    }
+
+    #[test]
+    fn impossible_provider_deltas_fail_closed() {
+        let mut wrong_count = delta(1, 1);
+        wrong_count.state_count -= 1;
+        assert!(matches!(
+            decode_provider_delta(wrong_count, M4_PRO_STATES.len(), 0),
+            Err(GpuError::ProviderStateCount { .. })
+        ));
+
+        assert!(matches!(
+            decode_provider_delta(delta(0, 0), M4_PRO_STATES.len(), 0),
+            Err(GpuError::ProviderZeroTotal)
+        ));
+
+        let mut impossible = delta(2, 0);
+        impossible.total_ticks = 1;
+        assert!(matches!(
+            decode_provider_delta(impossible, M4_PRO_STATES.len(), 0),
+            Err(GpuError::ProviderRatio { .. })
+        ));
     }
 }
