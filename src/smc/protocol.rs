@@ -56,7 +56,6 @@ pub(super) struct SmcConnection {
 }
 
 impl SmcConnection {
-    #[cfg(target_os = "macos")]
     pub fn open() -> Result<Self> {
         use std::ffi::{c_char, c_void};
 
@@ -94,11 +93,6 @@ impl SmcConnection {
         }
         assert_ne!(handle, 0, "IOServiceOpen returned a null connection");
         Ok(Self { handle })
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub fn open() -> Result<Self> {
-        Err(SmcError::UnsupportedPlatform)
     }
 
     pub fn key_count(&self) -> Result<u32> {
@@ -145,7 +139,6 @@ impl SmcConnection {
         Ok(self.call(&input)?.bytes)
     }
 
-    #[cfg(target_os = "macos")]
     fn call(&self, input: &SmcKeyData) -> Result<SmcKeyData> {
         use std::ffi::c_void;
         use std::mem::size_of;
@@ -195,14 +188,8 @@ impl SmcConnection {
         }
         Ok(output)
     }
-
-    #[cfg(not(target_os = "macos"))]
-    fn call(&self, _input: &SmcKeyData) -> Result<SmcKeyData> {
-        Err(SmcError::UnsupportedPlatform)
-    }
 }
 
-#[cfg(target_os = "macos")]
 impl Drop for SmcConnection {
     fn drop(&mut self) {
         #[link(name = "IOKit", kind = "framework")]
@@ -213,7 +200,6 @@ impl Drop for SmcConnection {
     }
 }
 
-#[cfg(target_os = "macos")]
 pub(super) fn cpu_brand() -> Result<String> {
     use std::ffi::{c_char, c_void};
 
@@ -266,11 +252,6 @@ pub(super) fn cpu_brand() -> Result<String> {
         bytes.pop();
     }
     Ok(String::from_utf8(bytes).expect("CPU brand must be UTF-8"))
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(super) fn cpu_brand() -> Result<String> {
-    Err(SmcError::UnsupportedPlatform)
 }
 
 #[cfg(test)]

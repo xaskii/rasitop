@@ -22,11 +22,6 @@ fn build_swift_app() -> Result<(), String> {
     let out_dir = PathBuf::from(required_env("OUT_DIR")?);
     let opt_level = required_env("OPT_LEVEL")?;
     let debug_info = required_env("DEBUG")? == "true";
-    let architecture = match required_env("CARGO_CFG_TARGET_ARCH")?.as_str() {
-        "aarch64" => "arm64",
-        "x86_64" => "x86_64",
-        architecture => return Err(format!("unsupported macOS architecture: {architecture}")),
-    };
     let deployment_target =
         env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "13.0".to_owned());
 
@@ -34,7 +29,6 @@ fn build_swift_app() -> Result<(), String> {
     let swiftc = command_stdout("xcrun", ["--find", "swiftc"])?;
 
     let module_cache = out_dir.join("module-cache");
-    let swift_module = out_dir.join("rasitop_app.swiftmodule");
     let swift_library = out_dir.join("librasitop_swift.a");
     fs::create_dir_all(&module_cache).map_err(display_error)?;
 
@@ -45,15 +39,12 @@ fn build_swift_app() -> Result<(), String> {
     command
         .arg("-emit-library")
         .arg("-static")
-        .arg("-parse-as-library")
         .arg("-module-name")
         .arg("rasitop_app")
-        .arg("-emit-module-path")
-        .arg(swift_module)
         .arg("-sdk")
         .arg(sdk_path)
         .arg("-target")
-        .arg(format!("{architecture}-apple-macosx{deployment_target}"))
+        .arg(format!("arm64-apple-macosx{deployment_target}"))
         .arg("-module-cache-path")
         .arg(&module_cache)
         .arg("-import-objc-header")

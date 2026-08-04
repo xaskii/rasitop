@@ -6,9 +6,6 @@ pub type Result<T> = std::result::Result<T, SmcError>;
 
 #[derive(Debug, Error)]
 pub enum SmcError {
-    #[error("AppleSMC access requires macOS")]
-    UnsupportedPlatform,
-
     #[error("IOServiceMatching(AppleSMC) failed")]
     ServiceMatching,
 
@@ -50,8 +47,7 @@ impl SmcError {
     /// Broad failure category for snapshots, CSV, and the C ABI.
     pub const fn category_flag(&self) -> u64 {
         match self {
-            Self::UnsupportedPlatform
-            | Self::ServiceMatching
+            Self::ServiceMatching
             | Self::ServiceNotFound
             | Self::Open { .. }
             | Self::CpuBrandSysctl { .. }

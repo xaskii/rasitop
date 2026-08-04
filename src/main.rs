@@ -260,11 +260,6 @@ fn main() -> ExitCode {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    anyhow::ensure!(
-        cfg!(target_os = "macos"),
-        "rasitop CPU recording requires macOS"
-    );
-
     match cli.command {
         Command::Measure(args) => {
             let summary = measure::measure(MeasureOptions {

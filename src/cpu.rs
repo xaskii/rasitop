@@ -4,9 +4,6 @@ type Result<T> = std::result::Result<T, CpuError>;
 
 #[derive(Debug, Error)]
 pub enum CpuError {
-    #[error("{provider} CPU sampling requires macOS")]
-    UnsupportedPlatform { provider: &'static str },
-
     #[error("host_statistics(HOST_CPU_LOAD_INFO) failed with kern_return_t {status}")]
     HostStatistics { status: i32 },
 
@@ -173,7 +170,6 @@ fn build_per_core_samples(
     }
 }
 
-#[cfg(target_os = "macos")]
 fn read_cpu_ticks() -> Result<CpuTicks> {
     use std::mem::{MaybeUninit, size_of};
     use std::os::raw::c_int;
@@ -237,14 +233,12 @@ fn read_cpu_ticks() -> Result<CpuTicks> {
     })
 }
 
-#[cfg(target_os = "macos")]
 struct ProcessorInfoBuffer {
     pointer: *mut std::os::raw::c_int,
     processor_count: usize,
     integer_count: usize,
 }
 
-#[cfg(target_os = "macos")]
 impl ProcessorInfoBuffer {
     fn as_slice(&self) -> &[CpuTicks] {
         // SAFETY: `host_processor_info` returned `processor_count` complete
@@ -254,7 +248,6 @@ impl ProcessorInfoBuffer {
     }
 }
 
-#[cfg(target_os = "macos")]
 impl Drop for ProcessorInfoBuffer {
     fn drop(&mut self) {
         use std::mem::size_of;
@@ -271,7 +264,6 @@ impl Drop for ProcessorInfoBuffer {
     }
 }
 
-#[cfg(target_os = "macos")]
 fn read_per_core_ticks() -> Result<ProcessorInfoBuffer> {
     use std::mem::size_of;
     use std::os::raw::c_int;
@@ -328,30 +320,6 @@ fn read_per_core_ticks() -> Result<ProcessorInfoBuffer> {
     );
 
     Ok(buffer)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn read_cpu_ticks() -> Result<CpuTicks> {
-    Err(CpuError::UnsupportedPlatform {
-        provider: "aggregate Mach",
-    })
-}
-
-#[cfg(not(target_os = "macos"))]
-struct ProcessorInfoBuffer;
-
-#[cfg(not(target_os = "macos"))]
-impl ProcessorInfoBuffer {
-    fn as_slice(&self) -> &[CpuTicks] {
-        &[]
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn read_per_core_ticks() -> Result<ProcessorInfoBuffer> {
-    Err(CpuError::UnsupportedPlatform {
-        provider: "per-core Mach",
-    })
 }
 
 #[cfg(test)]

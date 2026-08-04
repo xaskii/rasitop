@@ -3,6 +3,3 @@ rustflags = ["-Zpolonius=next"]
 
 [target.aarch64-apple-darwin]
 linker = "scripts/cargo-linker.sh"
-
-[target.x86_64-apple-darwin]
-linker = "scripts/cargo-linker.sh"
