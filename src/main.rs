@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -7,10 +7,10 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
-use rasitop::ioreport;
 use rasitop::measure::{self, MeasureMode, MeasureOptions};
 use rasitop::record::{self, RecordOptions};
 use rasitop::smc;
+use rasitop::{gpu, ioreport};
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Low-overhead Apple Silicon performance recorder")]
@@ -44,11 +44,73 @@ struct GpuArgs {
 enum GpuCommand {
     /// Inventory every IOReport channel and its declared states as CSV.
     Discover(GpuDiscoverArgs),
+
+    /// Record raw state residencies for one exact IOReport channel.
+    Residency(GpuResidencyArgs),
+
+    /// Decode the exact validated M4 Pro layout as whole-device busy ratio.
+    Validate(GpuValidateArgs),
+
+    /// Decode an existing raw residency capture using the exact local catalog.
+    Decode(GpuDecodeArgs),
 }
 
 #[derive(Debug, Args)]
 struct GpuDiscoverArgs {
     /// Write CSV diagnostics to this path instead of stdout.
+    #[arg(long, value_name = "PATH")]
+    output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct GpuResidencyArgs {
+    /// Exact IOReport group name.
+    #[arg(long)]
+    group: String,
+
+    /// Exact IOReport subgroup name.
+    #[arg(long)]
+    subgroup: String,
+
+    /// Exact IOReport channel name.
+    #[arg(long)]
+    channel: String,
+
+    /// Time between raw samples.
+    #[arg(long, default_value = "1s", value_parser = humantime::parse_duration)]
+    interval: Duration,
+
+    /// Number of sample deltas to write.
+    #[arg(long, default_value_t = 10)]
+    count: u64,
+
+    /// Write CSV diagnostics to this path instead of stdout.
+    #[arg(long, value_name = "PATH")]
+    output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct GpuValidateArgs {
+    /// Time between samples.
+    #[arg(long, default_value = "1s", value_parser = humantime::parse_duration)]
+    interval: Duration,
+
+    /// Number of sample deltas to write.
+    #[arg(long, default_value_t = 10)]
+    count: u64,
+
+    /// Write decoded CSV diagnostics to this path instead of stdout.
+    #[arg(long, value_name = "PATH")]
+    output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct GpuDecodeArgs {
+    /// Raw residency CSV produced by `gpu residency`.
+    #[arg(long, value_name = "PATH")]
+    input: PathBuf,
+
+    /// Write decoded CSV diagnostics to this path instead of stdout.
     #[arg(long, value_name = "PATH")]
     output: Option<PathBuf>,
 }
@@ -198,6 +260,74 @@ fn run() -> Result<()> {
             };
             ioreport::write_csv(BufWriter::new(writer), &inventory)
                 .context("write GPU channel inventory")
+        }
+        Command::Gpu(GpuArgs {
+            command: GpuCommand::Residency(args),
+        }) => {
+            anyhow::ensure!(
+                !args.interval.is_zero(),
+                "GPU residency interval must be non-zero"
+            );
+            anyhow::ensure!(args.count != 0, "GPU residency count must be non-zero");
+            let writer: Box<dyn Write> = match args.output {
+                Some(path) => {
+                    let file = File::create(&path).with_context(|| {
+                        format!("create GPU residency capture at {}", path.display())
+                    })?;
+                    Box::new(file)
+                }
+                None => Box::new(io::stdout()),
+            };
+            ioreport::record_residencies(
+                BufWriter::new(writer),
+                &ioreport::ResidencySelector {
+                    group: args.group,
+                    subgroup: args.subgroup,
+                    channel: args.channel,
+                },
+                args.interval,
+                args.count,
+            )
+            .context("record GPU state residencies")
+        }
+        Command::Gpu(GpuArgs {
+            command: GpuCommand::Validate(args),
+        }) => {
+            anyhow::ensure!(
+                !args.interval.is_zero(),
+                "GPU validation interval must be non-zero"
+            );
+            anyhow::ensure!(args.count != 0, "GPU validation count must be non-zero");
+            let samples = gpu::capture_validated(args.interval, args.count)
+                .context("capture validated GPU residency")?;
+            let writer: Box<dyn Write> = match args.output {
+                Some(path) => {
+                    let file = File::create(&path)
+                        .with_context(|| format!("create GPU validation at {}", path.display()))?;
+                    Box::new(file)
+                }
+                None => Box::new(io::stdout()),
+            };
+            gpu::write_csv(BufWriter::new(writer), &samples)
+                .context("write validated GPU residency")
+        }
+        Command::Gpu(GpuArgs {
+            command: GpuCommand::Decode(args),
+        }) => {
+            let input = File::open(&args.input)
+                .with_context(|| format!("open raw GPU capture at {}", args.input.display()))?;
+            let samples =
+                gpu::decode_csv(BufReader::new(input)).context("decode validated GPU residency")?;
+            let writer: Box<dyn Write> = match args.output {
+                Some(path) => {
+                    let file = File::create(&path)
+                        .with_context(|| format!("create GPU validation at {}", path.display()))?;
+                    Box::new(file)
+                }
+                None => Box::new(io::stdout()),
+            };
+            gpu::write_csv(BufWriter::new(writer), &samples)
+                .context("write validated GPU residency")
         }
     }
 }

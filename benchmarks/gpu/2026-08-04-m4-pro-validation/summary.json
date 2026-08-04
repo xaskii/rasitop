@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "steady_window": "All idle samples; load samples excluding the first and last transition intervals.",
+  "profiles": {
+    "idle": {
+      "samples": 18,
+      "mean_gpu_busy_ratio": 0.05688318590756158,
+      "median_gpu_busy_ratio": 0.04136599852065462,
+      "minimum_gpu_busy_ratio": 0.012438421749629202,
+      "maximum_gpu_busy_ratio": 0.21079938390180614
+    },
+    "low": {
+      "submitted_work_duty_cycle": 0.25,
+      "samples": 15,
+      "mean_gpu_busy_ratio": 0.41130280088302384,
+      "median_gpu_busy_ratio": 0.4073034577905055,
+      "minimum_gpu_busy_ratio": 0.23895442072183792,
+      "maximum_gpu_busy_ratio": 0.6736186585993165
+    },
+    "medium": {
+      "submitted_work_duty_cycle": 0.5,
+      "samples": 15,
+      "mean_gpu_busy_ratio": 0.6474198689911058,
+      "median_gpu_busy_ratio": 0.6119492830795812,
+      "minimum_gpu_busy_ratio": 0.5261582954873995,
+      "maximum_gpu_busy_ratio": 0.8170944487723552
+    },
+    "maximum": {
+      "submitted_work_duty_cycle": 1.0,
+      "samples": 15,
+      "mean_gpu_busy_ratio": 0.9798574902588943,
+      "median_gpu_busy_ratio": 1.0,
+      "minimum_gpu_busy_ratio": 0.8933509103729256,
+      "maximum_gpu_busy_ratio": 1.0
+    }
+  },
+  "diagnostic_sample_cost_us": {
+    "samples": 81,
+    "minimum": 345,
+    "median": 663,
+    "p95": 1907,
+    "maximum": 2085
+  },
+  "one_second_residency_coverage_ticks": {
+    "expected": 24000000,
+    "minimum": 23967608,
+    "maximum": 24205876,
+    "minimum_ratio": 0.9986503333333333,
+    "maximum_ratio": 1.0085781666666667
+  }
+}

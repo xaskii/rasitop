@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "template": "Metal System Trace",
+  "instruments_version": "16.0 (17F113)",
+  "os": "macOS 27.0",
+  "os_build": "26A5388g",
+  "machine_model": "Mac16,8",
+  "chip": "Apple M4 Pro",
+  "table": "metal-gpu-state-intervals",
+  "idle_reference": {
+    "duration_seconds_covered": 6.4552,
+    "active_events": 2289,
+    "idle_events": 1309,
+    "active_duration_seconds": 0.2506,
+    "active_share_of_reported_durations": 0.0388
+  },
+  "maximum_load_reference": {
+    "duration_seconds_covered": 6.4821,
+    "active_events": 27996,
+    "idle_events": 21872,
+    "active_duration_seconds": 2.7168,
+    "active_share_of_reported_durations": 0.4191
+  },
+  "interpretation": "Instruments reports substantially more GPU activity under the controlled maximum workload than in the idle reference. Its overlapping channel intervals are a directional reference, not a utilization formula or sample-aligned comparator.",
+  "privacy": "The .trace bundles and raw XML exports are intentionally not committed because they enumerate unrelated processes, paths, device UUIDs, and host names."
+}
