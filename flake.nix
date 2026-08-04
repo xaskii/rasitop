@@ -49,6 +49,7 @@
     devShells.${system}.default = pkgs.mkShell {
       packages = [
         cargoInstruments
+        pkgs.just
         rustToolchain
       ];
 

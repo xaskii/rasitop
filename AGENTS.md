@@ -13,9 +13,9 @@ and `jj commit`.
 
 ## Build and Test
 
-- Build with `cargo build` (use `cargo build --release` for release).
-- Run tests with `cargo nextest run` (fallback: `cargo test`).
-- Format and lint with `cargo fmt` and `cargo clippy`.
+- Build with `just build` (use `just release` for release).
+- Format, lint, and test with `just check`.
+- Raw Cargo commands remain supported when a narrower check is useful.
 - Validate the unsafe FFI boundary with
   `cargo +nightly miri test --lib ffi::tests`.
 
@@ -24,10 +24,7 @@ and `jj commit`.
 - Try `cargo run --release -- record --duration 1m` to sanity-check live CPU
   sampling output.
 - Stop with Ctrl-C to verify clean shutdown.
-- For UI work, build the release app and open its live-data preview window with
-  `open -n target/release/rasitop.app --args --ui-preview`. Add
-  `--profile-duration-seconds <seconds>` to make an automated check exit on its
-  own.
+- For UI work, open a timed release preview with `just preview <seconds>`.
 - The preview hosts the production sensor summary in a standard window, but it
   does not exercise native `NSMenu` items or dismissal. Smoke-test the normal
   status menu after changing menu integration or behavior.
