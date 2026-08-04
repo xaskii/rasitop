@@ -3,13 +3,18 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 use crate::cpu::{CpuError, CpuSample, MachCpuProvider, MachPerCoreProvider, PerCoreSample};
+use crate::gpu::{
+    CAPABILITY_GPU_UTILIZATION, ERROR_GPU_INITIALIZATION, ERROR_GPU_SAMPLE, GpuError, GpuProvider,
+    GpuReading,
+};
 use crate::smc::{SensorSample, SmcError, SmcProvider};
 
 pub const MAX_LOGICAL_CPUS: usize = 64;
 pub const HISTORY_CAPACITY: usize = 180;
 pub const REQUEST_PER_CORE: u32 = 1 << 0;
 pub const REQUEST_SENSORS: u32 = 1 << 1;
-const REQUEST_MASK: u32 = REQUEST_PER_CORE | REQUEST_SENSORS;
+pub const REQUEST_GPU: u32 = 1 << 2;
+const REQUEST_MASK: u32 = REQUEST_PER_CORE | REQUEST_SENSORS | REQUEST_GPU;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SampleRequest(u32);
@@ -18,6 +23,7 @@ impl SampleRequest {
     pub const NONE: Self = Self(0);
     pub const PER_CORE: Self = Self(REQUEST_PER_CORE);
     pub const SENSORS: Self = Self(REQUEST_SENSORS);
+    pub const GPU: Self = Self(REQUEST_GPU);
 
     pub const fn from_bits(bits: u32) -> Option<Self> {
         if bits & !REQUEST_MASK == 0 {
@@ -111,6 +117,7 @@ pub struct EngineSnapshot {
     pub per_core_count: u32,
     pub per_core: [PerCoreSample; MAX_LOGICAL_CPUS],
     pub sensors: SensorSample,
+    pub gpu: GpuReading,
 }
 
 impl Default for EngineSnapshot {
@@ -124,6 +131,7 @@ impl Default for EngineSnapshot {
             per_core_count: 0,
             per_core: [PerCoreSample::default(); MAX_LOGICAL_CPUS],
             sensors: SensorSample::default(),
+            gpu: GpuReading::default(),
         }
     }
 }
@@ -181,13 +189,14 @@ impl HistoryBuffer {
     }
 }
 
-#[derive(Debug)]
 pub struct CpuEngine {
     aggregate: MachCpuProvider,
     per_core: Option<MachPerCoreProvider>,
     sensors: Option<SmcProvider>,
     sensor_fallback: SensorSample,
     sensor_error: Option<SmcError>,
+    gpu: Option<GpuProvider>,
+    gpu_error: Option<GpuError>,
     emissions: EmissionTimeline,
     history: HistoryBuffer,
     snapshot: EngineSnapshot,
@@ -213,6 +222,24 @@ impl CpuEngine {
                 (None, fallback, Some(error))
             }
         };
+        let (gpu, gpu_reading, gpu_error) = match GpuProvider::discover()
+            .and_then(|discovery| GpuProvider::new(discovery.catalog))
+        {
+            Ok(provider) => (
+                Some(provider),
+                GpuReading {
+                    busy_ratio: f64::NAN,
+                    capability_flags: CAPABILITY_GPU_UTILIZATION,
+                    error_flags: 0,
+                },
+                None,
+            ),
+            Err(error) => (
+                None,
+                GpuReading::unavailable(ERROR_GPU_INITIALIZATION),
+                Some(error),
+            ),
+        };
 
         let started_at = Instant::now();
         Ok(Self {
@@ -223,9 +250,14 @@ impl CpuEngine {
             sensors,
             sensor_fallback,
             sensor_error,
+            gpu,
+            gpu_error,
             emissions: EmissionTimeline::new(started_at),
             history: HistoryBuffer::default(),
-            snapshot: EngineSnapshot::default(),
+            snapshot: EngineSnapshot {
+                gpu: gpu_reading,
+                ..EngineSnapshot::default()
+            },
         })
     }
 
@@ -233,6 +265,10 @@ impl CpuEngine {
     /// engine is operating in CPU-only mode.
     pub fn sensor_error(&self) -> Option<&SmcError> {
         self.sensor_error.as_ref()
+    }
+
+    pub fn gpu_error(&self) -> Option<&GpuError> {
+        self.gpu_error.as_ref()
     }
 
     pub fn history(&self, output: &mut [HistoryPoint]) -> usize {
@@ -256,6 +292,10 @@ impl CpuEngine {
             .map_err(EngineError::PerCoreBaseline);
 
         self.emissions.reset_interval(Instant::now());
+        if let Some(gpu) = &mut self.gpu {
+            gpu.reset_baseline();
+            self.snapshot.gpu.busy_ratio = f64::NAN;
+        }
         aggregate?;
         per_core?;
         Ok(())
@@ -283,6 +323,25 @@ impl CpuEngine {
                 .sensors
                 .as_mut()
                 .map_or(self.sensor_fallback, SmcProvider::sample);
+        }
+        if request.contains(SampleRequest::GPU) {
+            match self.gpu.as_mut().map(GpuProvider::sample) {
+                Some(Ok(Some(sample))) => {
+                    self.snapshot.gpu.busy_ratio = sample.busy_ratio;
+                    self.snapshot.gpu.error_flags = 0;
+                    self.gpu_error = None;
+                }
+                Some(Ok(None)) => {
+                    self.snapshot.gpu.busy_ratio = f64::NAN;
+                    self.snapshot.gpu.error_flags = 0;
+                }
+                Some(Err(error)) => {
+                    self.snapshot.gpu.busy_ratio = f64::NAN;
+                    self.snapshot.gpu.error_flags = ERROR_GPU_SAMPLE;
+                    self.gpu_error = Some(error);
+                }
+                None => {}
+            }
         }
 
         let per_core_count = if per_core_available {

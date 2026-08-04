@@ -166,6 +166,7 @@ mod tests {
     };
     use crate::cpu::{CpuSample, PerCoreSample};
     use crate::engine::{EngineSnapshot, HistoryPoint};
+    use crate::gpu::GpuReading;
     use crate::smc::SensorSample;
 
     #[test]
@@ -181,12 +182,16 @@ mod tests {
         assert_eq!(offset_of!(SensorSample, fan_rpm), 16);
         assert_eq!(offset_of!(SensorSample, system_power_w), 24);
         assert_eq!(offset_of!(SensorSample, capability_flags), 32);
-        assert_eq!(size_of::<EngineSnapshot>(), 3_200);
+        assert_eq!(size_of::<GpuReading>(), 24);
+        assert_eq!(align_of::<GpuReading>(), 8);
+        assert_eq!(offset_of!(GpuReading, capability_flags), 8);
+        assert_eq!(size_of::<EngineSnapshot>(), 3_224);
         assert_eq!(align_of::<EngineSnapshot>(), 8);
         assert_eq!(offset_of!(EngineSnapshot, aggregate), 32);
         assert_eq!(offset_of!(EngineSnapshot, per_core_count), 72);
         assert_eq!(offset_of!(EngineSnapshot, per_core), 80);
         assert_eq!(offset_of!(EngineSnapshot, sensors), 3_152);
+        assert_eq!(offset_of!(EngineSnapshot, gpu), 3_200);
         assert_eq!(size_of::<HistoryPoint>(), 16);
         assert_eq!(align_of::<HistoryPoint>(), 8);
         assert_eq!(offset_of!(HistoryPoint, total_ratio), 8);

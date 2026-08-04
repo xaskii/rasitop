@@ -9,8 +9,9 @@ use serde::Serialize;
 use crate::cpu::PerCoreSample;
 use crate::engine::{CpuEngine, EngineSnapshot, SampleRequest};
 
-const SCHEMA_VERSION: u8 = 1;
-const CSV_HEADER: [&str; 17] = [
+const SCHEMA_VERSION: u8 = 2;
+const GPU_INTERVAL: Duration = Duration::from_secs(2);
+const CSV_HEADER: [&str; 20] = [
     "schema_version",
     "sequence",
     "timestamp_utc",
@@ -26,8 +27,11 @@ const CSV_HEADER: [&str; 17] = [
     "cpu_temp_avg_c",
     "fan_rpm",
     "system_power_w",
+    "gpu_busy_ratio",
     "capability_flags",
     "error_flags",
+    "gpu_capability_flags",
+    "gpu_error_flags",
 ];
 const PER_CORE_CSV_HEADER: [&str; 10] = [
     "schema_version",
@@ -66,8 +70,11 @@ struct CsvRecord<'a> {
     cpu_temp_avg_c: Option<f64>,
     fan_rpm: Option<f64>,
     system_power_w: Option<f64>,
+    gpu_busy_ratio: Option<f64>,
     capability_flags: u64,
     error_flags: u64,
+    gpu_capability_flags: u64,
+    gpu_error_flags: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -101,7 +108,7 @@ pub fn record<W: Write>(
     .context("install Ctrl-C handler")?;
 
     let sample_per_core = per_core_writer.is_some();
-    let request = if sample_per_core {
+    let base_request = if sample_per_core {
         SampleRequest::PER_CORE | SampleRequest::SENSORS
     } else {
         SampleRequest::SENSORS
@@ -117,6 +124,7 @@ pub fn record<W: Write>(
 
     let start = Instant::now();
     let mut next_deadline = start + options.interval;
+    let mut next_gpu_deadline = start + GPU_INTERVAL;
     let end = options.duration.map(|duration| start + duration);
     let mut samples_written = 0_u64;
     let mut csv = csv_writer(writer)?;
@@ -135,10 +143,16 @@ pub fn record<W: Write>(
             Err(RecvTimeoutError::Timeout) => {}
         }
 
+        let gpu_requested = gpu_sample_due(next_deadline, &mut next_gpu_deadline);
+        let request = if gpu_requested {
+            base_request | SampleRequest::GPU
+        } else {
+            base_request
+        };
         if let Some(snapshot) = engine.sample(request).context("sample CPU engine")? {
             samples_written += 1;
             let timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
-            write_sample(&mut csv, &timestamp, snapshot)?;
+            write_sample(&mut csv, &timestamp, snapshot, gpu_requested)?;
             if let Some(csv) = &mut per_core_csv {
                 write_per_core_samples(csv, snapshot.sequence, &timestamp, snapshot.per_core())?;
             }
@@ -152,6 +166,16 @@ pub fn record<W: Write>(
         csv.flush().context("flush per-core CPU CSV output")?;
     }
     Ok(())
+}
+
+fn gpu_sample_due(sample_deadline: Instant, next_gpu_deadline: &mut Instant) -> bool {
+    if sample_deadline < *next_gpu_deadline {
+        return false;
+    }
+    while *next_gpu_deadline <= sample_deadline {
+        *next_gpu_deadline += GPU_INTERVAL;
+    }
+    true
 }
 
 fn csv_writer<W: Write>(writer: W) -> Result<csv::Writer<W>> {
@@ -176,6 +200,7 @@ fn write_sample<W: Write>(
     csv: &mut csv::Writer<W>,
     timestamp_utc: &str,
     snapshot: &EngineSnapshot,
+    gpu_requested: bool,
 ) -> Result<()> {
     let record = CsvRecord {
         schema_version: SCHEMA_VERSION,
@@ -193,8 +218,12 @@ fn write_sample<W: Write>(
         cpu_temp_avg_c: snapshot.sensors.cpu_temp_avg_c(),
         fan_rpm: snapshot.sensors.fan_rpm(),
         system_power_w: snapshot.sensors.system_power_w(),
+        gpu_busy_ratio: (gpu_requested && snapshot.gpu.busy_ratio.is_finite())
+            .then_some(snapshot.gpu.busy_ratio),
         capability_flags: snapshot.sensors.capability_flags,
         error_flags: snapshot.sensors.error_flags,
+        gpu_capability_flags: snapshot.gpu.capability_flags,
+        gpu_error_flags: snapshot.gpu.error_flags,
     };
 
     csv.serialize(record).context("write CPU CSV row")
@@ -227,12 +256,15 @@ fn write_per_core_samples<W: Write>(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::{
-        EngineSnapshot, PerCoreSample, csv_writer, per_core_csv_writer, write_per_core_samples,
-        write_sample,
+        EngineSnapshot, PerCoreSample, csv_writer, gpu_sample_due, per_core_csv_writer,
+        write_per_core_samples, write_sample,
     };
     use crate::cpu::CpuSample;
     use crate::engine::MAX_LOGICAL_CPUS;
+    use crate::gpu::{CAPABILITY_GPU_UTILIZATION, GpuReading};
     use crate::smc::{
         CAPABILITY_CPU_TEMPERATURE, CAPABILITY_FAN_SPEED, CAPABILITY_SYSTEM_POWER, SensorSample,
     };
@@ -265,9 +297,14 @@ mod tests {
                     | CAPABILITY_SYSTEM_POWER,
                 error_flags: 0,
             },
+            gpu: GpuReading {
+                busy_ratio: 0.625,
+                capability_flags: CAPABILITY_GPU_UTILIZATION,
+                error_flags: 0,
+            },
         };
 
-        write_sample(&mut csv, "2026-07-14T20:00:00.000Z", &snapshot).expect("write sample");
+        write_sample(&mut csv, "2026-07-14T20:00:00.000Z", &snapshot, true).expect("write sample");
         csv.flush().expect("flush CSV");
         drop(csv);
 
@@ -276,12 +313,14 @@ mod tests {
         assert_eq!(
             lines.next(),
             Some(
-                "schema_version,sequence,timestamp_utc,monotonic_ms,interval_ms,sample_duration_us,cpu_total_ratio,cpu_user_ratio,cpu_system_ratio,cpu_nice_ratio,cpu_idle_ratio,cpu_temp_max_c,cpu_temp_avg_c,fan_rpm,system_power_w,capability_flags,error_flags"
+                "schema_version,sequence,timestamp_utc,monotonic_ms,interval_ms,sample_duration_us,cpu_total_ratio,cpu_user_ratio,cpu_system_ratio,cpu_nice_ratio,cpu_idle_ratio,cpu_temp_max_c,cpu_temp_avg_c,fan_rpm,system_power_w,gpu_busy_ratio,capability_flags,error_flags,gpu_capability_flags,gpu_error_flags"
             )
         );
         let row = lines.next().expect("data row");
-        assert!(row.starts_with("1,1,"));
-        assert!(row.contains(",1000.0,1000.0,42,0.7,0.4,0.2,0.1,0.3,67.5,61.25,2300.0,12.5,7,0"));
+        assert!(row.starts_with("2,1,"));
+        assert!(row.contains(
+            ",1000.0,1000.0,42,0.7,0.4,0.2,0.1,0.3,67.5,61.25,2300.0,12.5,0.625,7,0,1,0"
+        ));
         assert_eq!(lines.next(), None);
     }
 
@@ -315,8 +354,31 @@ mod tests {
         );
         assert_eq!(
             lines.next(),
-            Some("1,7,2026-07-14T20:00:00.000Z,3,,0.7,0.4,0.2,0.1,0.3")
+            Some("2,7,2026-07-14T20:00:00.000Z,3,,0.7,0.4,0.2,0.1,0.3")
         );
         assert_eq!(lines.next(), None);
+    }
+
+    #[test]
+    fn gpu_cadence_uses_existing_deadlines_without_catch_up_bursts() {
+        let start = Instant::now();
+        let mut next_gpu = start + Duration::from_secs(2);
+        assert!(!gpu_sample_due(
+            start + Duration::from_secs(1),
+            &mut next_gpu
+        ));
+        assert!(gpu_sample_due(
+            start + Duration::from_secs(2),
+            &mut next_gpu
+        ));
+        assert!(!gpu_sample_due(
+            start + Duration::from_secs(3),
+            &mut next_gpu
+        ));
+        assert!(gpu_sample_due(
+            start + Duration::from_secs(9),
+            &mut next_gpu
+        ));
+        assert_eq!(next_gpu, start + Duration::from_secs(10));
     }
 }

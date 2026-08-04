@@ -60,6 +60,38 @@ pub struct GpuSample {
     pub interval: Duration,
 }
 
+pub const CAPABILITY_GPU_UTILIZATION: u64 = 1 << 0;
+pub const ERROR_GPU_INITIALIZATION: u64 = 1 << 63;
+pub const ERROR_GPU_SAMPLE: u64 = 1 << 62;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GpuReading {
+    pub busy_ratio: f64,
+    pub capability_flags: u64,
+    pub error_flags: u64,
+}
+
+impl Default for GpuReading {
+    fn default() -> Self {
+        Self {
+            busy_ratio: f64::NAN,
+            capability_flags: 0,
+            error_flags: 0,
+        }
+    }
+}
+
+impl GpuReading {
+    pub fn unavailable(error_flags: u64) -> Self {
+        Self {
+            busy_ratio: f64::NAN,
+            capability_flags: 0,
+            error_flags,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GpuDiscovery {
     pub catalog: &'static GpuCatalogEntry,

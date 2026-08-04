@@ -19,6 +19,11 @@ extern "C" {
 
 static const uint32_t rasitop_request_per_core = 0x1;
 static const uint32_t rasitop_request_sensors = 0x2;
+static const uint32_t rasitop_request_gpu = 0x4;
+
+#define rasitop_gpu_capability_utilization UINT64_C(0x1)
+#define rasitop_gpu_error_initialization UINT64_C(0x8000000000000000)
+#define rasitop_gpu_error_sample UINT64_C(0x4000000000000000)
 
 #define rasitop_sensor_capability_cpu_temperature UINT64_C(0x1)
 #define rasitop_sensor_capability_fan_speed UINT64_C(0x2)
@@ -57,6 +62,12 @@ typedef struct {
 } rasitop_sensor_sample;
 
 typedef struct {
+  double busy_ratio;
+  uint64_t capability_flags;
+  uint64_t error_flags;
+} rasitop_gpu_reading;
+
+typedef struct {
   uint64_t sequence;
   uint64_t monotonic_ns;
   uint64_t interval_ns;
@@ -65,6 +76,7 @@ typedef struct {
   uint32_t per_core_count;
   rasitop_per_core_sample per_core[rasitop_max_logical_cpus];
   rasitop_sensor_sample sensors;
+  rasitop_gpu_reading gpu;
 } rasitop_engine_snapshot;
 
 typedef struct {
@@ -107,7 +119,9 @@ _Static_assert(offsetof(rasitop_sensor_sample, system_power_w) == 24,
                "rasitop_sensor_sample field order changed");
 _Static_assert(offsetof(rasitop_sensor_sample, capability_flags) == 32,
                "rasitop_sensor_sample field order changed");
-_Static_assert(sizeof(rasitop_engine_snapshot) == 3200,
+_Static_assert(sizeof(rasitop_gpu_reading) == 24,
+               "rasitop_gpu_reading ABI layout changed");
+_Static_assert(sizeof(rasitop_engine_snapshot) == 3224,
                "rasitop_engine_snapshot ABI layout changed");
 _Static_assert(offsetof(rasitop_engine_snapshot, aggregate) == 32,
                "rasitop_engine_snapshot aggregate offset changed");
@@ -117,6 +131,8 @@ _Static_assert(offsetof(rasitop_engine_snapshot, per_core) == 80,
                "rasitop_engine_snapshot core array offset changed");
 _Static_assert(offsetof(rasitop_engine_snapshot, sensors) == 3152,
                "rasitop_engine_snapshot sensor offset changed");
+_Static_assert(offsetof(rasitop_engine_snapshot, gpu) == 3200,
+               "rasitop_engine_snapshot GPU offset changed");
 _Static_assert(sizeof(rasitop_history_point) == 16,
                "rasitop_history_point ABI layout changed");
 _Static_assert(offsetof(rasitop_history_point, total_ratio) == 8,
