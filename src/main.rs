@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
+use rasitop::ioreport;
 use rasitop::measure::{self, MeasureMode, MeasureOptions};
 use rasitop::record::{self, RecordOptions};
 use rasitop::smc;
@@ -28,6 +29,28 @@ enum Command {
 
     /// Enumerate and decode every AppleSMC key for diagnostics.
     SmcScan(SmcScanArgs),
+
+    /// Run accelerator diagnostics that never execute during normal sampling.
+    Gpu(GpuArgs),
+}
+
+#[derive(Debug, Args)]
+struct GpuArgs {
+    #[command(subcommand)]
+    command: GpuCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum GpuCommand {
+    /// Inventory every IOReport channel and its declared states as CSV.
+    Discover(GpuDiscoverArgs),
+}
+
+#[derive(Debug, Args)]
+struct GpuDiscoverArgs {
+    /// Write CSV diagnostics to this path instead of stdout.
+    #[arg(long, value_name = "PATH")]
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -160,6 +183,21 @@ fn run() -> Result<()> {
             let mut writer = BufWriter::new(writer);
             serde_json::to_writer_pretty(&mut writer, &report).context("write SMC diagnostics")?;
             writer.write_all(b"\n").context("finish SMC diagnostics")
+        }
+        Command::Gpu(GpuArgs {
+            command: GpuCommand::Discover(args),
+        }) => {
+            let inventory = ioreport::discover().context("inventory IOReport channels")?;
+            let writer: Box<dyn Write> = match args.output {
+                Some(path) => {
+                    let file = File::create(&path)
+                        .with_context(|| format!("create GPU inventory at {}", path.display()))?;
+                    Box::new(file)
+                }
+                None => Box::new(io::stdout()),
+            };
+            ioreport::write_csv(BufWriter::new(writer), &inventory)
+                .context("write GPU channel inventory")
         }
     }
 }

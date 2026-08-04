@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "captured_utc_date": "2026-08-04",
+  "machine_model": "Mac16,8",
+  "chip": "Apple M4 Pro",
+  "memory_gb": 24,
+  "architecture": "arm64",
+  "os": "macOS 27.0",
+  "os_build": "26A5388g",
+  "command": "cargo run --release -- gpu discover --output benchmarks/gpu/2026-08-04-m4-pro/channels.csv",
+  "notes": "Raw IOReport channel inventory only. Empty state_name fields mean the copied catalog did not declare a name; no names were inferred. No workload was run."
+}
