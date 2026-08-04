@@ -6,6 +6,8 @@ private struct SensorDisplaySnapshot {
   var averageTemperature: Double?
   var fanSpeed: Double?
   var systemPower: Double?
+  var gpuRatio: Double?
+  var gpuSupported = false
 }
 
 private struct CPUComponentDisplaySample {
@@ -24,7 +26,8 @@ private enum CPUComponentColors {
 protocol SensorDetailsConsumer: AnyObject {
   func update(
     from snapshot: inout rasitop_engine_snapshot,
-    history: UnsafeBufferPointer<rasitop_history_point>?
+    history: UnsafeBufferPointer<rasitop_history_point>?,
+    gpuHistory: UnsafeBufferPointer<rasitop_history_point>?
   )
 }
 
@@ -70,11 +73,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate, SensorDetailsConsume
 
   func update(
     from snapshot: inout rasitop_engine_snapshot,
-    history: UnsafeBufferPointer<rasitop_history_point>?
+    history: UnsafeBufferPointer<rasitop_history_point>?,
+    gpuHistory: UnsafeBufferPointer<rasitop_history_point>?
   ) {
     summaryPresenter.update(
       from: &snapshot,
       history: history,
+      gpuHistory: gpuHistory,
       render: isShown
     )
   }
@@ -101,6 +106,11 @@ private final class SensorSummaryPresenter {
     count: Int(rasitop_history_capacity)
   )
   private var historyCount = 0
+  private var gpuHistoryPoints = Array(
+    repeating: rasitop_history_point(),
+    count: Int(rasitop_gpu_history_capacity)
+  )
+  private var gpuHistoryCount = 0
   private var coreSamples = Array(
     repeating: CPUComponentDisplaySample(),
     count: Int(rasitop_max_logical_cpus)
@@ -110,6 +120,7 @@ private final class SensorSummaryPresenter {
   func update(
     from snapshot: inout rasitop_engine_snapshot,
     history: UnsafeBufferPointer<rasitop_history_point>?,
+    gpuHistory: UnsafeBufferPointer<rasitop_history_point>?,
     render shouldRender: Bool
   ) {
     latestSnapshot = SensorDisplaySnapshot(
@@ -117,7 +128,11 @@ private final class SensorSummaryPresenter {
       hottestTemperature: finite(snapshot.sensors.cpu_temp_max_c),
       averageTemperature: finite(snapshot.sensors.cpu_temp_avg_c),
       fanSpeed: finite(snapshot.sensors.fan_rpm),
-      systemPower: finite(snapshot.sensors.system_power_w)
+      systemPower: finite(snapshot.sensors.system_power_w),
+      gpuRatio: finite(snapshot.gpu.busy_ratio),
+      gpuSupported:
+        snapshot.gpu.capability_flags
+        & UInt64(rasitop_gpu_capability_utilization) != 0
     )
     coreCount = min(
       Int(snapshot.per_core_count),
@@ -146,6 +161,12 @@ private final class SensorSummaryPresenter {
         historyPoints[index] = history[index]
       }
     }
+    if let gpuHistory {
+      gpuHistoryCount = min(gpuHistory.count, gpuHistoryPoints.count)
+      for index in 0..<gpuHistoryCount {
+        gpuHistoryPoints[index] = gpuHistory[index]
+      }
+    }
     if shouldRender {
       render()
     }
@@ -153,18 +174,24 @@ private final class SensorSummaryPresenter {
 
   func render() {
     historyPoints.withUnsafeBufferPointer { historyBuffer in
-      coreSamples.withUnsafeBufferPointer { coreBuffer in
-        view.update(
-          with: latestSnapshot,
-          history: UnsafeBufferPointer(
-            start: historyBuffer.baseAddress,
-            count: historyCount
-          ),
-          cores: UnsafeBufferPointer(
-            start: coreBuffer.baseAddress,
-            count: coreCount
+      gpuHistoryPoints.withUnsafeBufferPointer { gpuHistoryBuffer in
+        coreSamples.withUnsafeBufferPointer { coreBuffer in
+          view.update(
+            with: latestSnapshot,
+            history: UnsafeBufferPointer(
+              start: historyBuffer.baseAddress,
+              count: historyCount
+            ),
+            gpuHistory: UnsafeBufferPointer(
+              start: gpuHistoryBuffer.baseAddress,
+              count: gpuHistoryCount
+            ),
+            cores: UnsafeBufferPointer(
+              start: coreBuffer.baseAddress,
+              count: coreCount
+            )
           )
-        )
+        }
       }
     }
     resizeView()
@@ -228,16 +255,21 @@ final class SensorSummaryPreviewWindowController: NSWindowController, SensorDeta
 
   func update(
     from snapshot: inout rasitop_engine_snapshot,
-    history: UnsafeBufferPointer<rasitop_history_point>?
+    history: UnsafeBufferPointer<rasitop_history_point>?,
+    gpuHistory: UnsafeBufferPointer<rasitop_history_point>?
   ) {
     summaryPresenter.update(
       from: &snapshot,
       history: history,
+      gpuHistory: gpuHistory,
       render: true
     )
     let size = summaryPresenter.view.frame.size
     if window?.contentView?.frame.size != size {
       window?.setContentSize(size)
+      if let bounds = window?.contentView?.bounds {
+        summaryPresenter.view.frame = bounds
+      }
     }
   }
 }
@@ -247,12 +279,15 @@ private final class SensorSummaryView: NSView {
   static let width = 264.0
 
   private let historyView = CPUHistoryView()
+  private let gpuHistoryView = GPUHistoryView()
+  private let gpuValueLabel = NSTextField(labelWithString: "—")
+  private let gpuStack = NSStackView()
   private let statsTable = StatsTableView()
   private let coreComponentsView = CPUCoreComponentsView()
   private var tableHeightConstraint: NSLayoutConstraint?
 
   var preferredHeight: CGFloat {
-    181 + statsTable.preferredHeight
+    181 + statsTable.preferredHeight + (gpuStack.isHidden ? 0 : 64)
   }
 
   init() {
@@ -266,6 +301,22 @@ private final class SensorSummaryView: NSView {
     historyStack.orientation = .vertical
     historyStack.alignment = .width
     historyStack.spacing = 5
+
+    let gpuLabel = NSTextField(labelWithString: "GPU")
+    gpuLabel.font = .systemFont(ofSize: 9, weight: .semibold)
+    gpuLabel.textColor = .secondaryLabelColor
+    let gpuSpacer = NSView()
+    gpuSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    gpuValueLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+    gpuValueLabel.textColor = .secondaryLabelColor
+    let gpuHeader = NSStackView(views: [gpuLabel, gpuSpacer, gpuValueLabel])
+    gpuHeader.orientation = .horizontal
+    gpuHeader.alignment = .centerY
+    gpuStack.setViews([gpuHeader, gpuHistoryView], in: .top)
+    gpuStack.orientation = .vertical
+    gpuStack.alignment = .width
+    gpuStack.spacing = 5
+    gpuStack.isHidden = true
 
     let coresLabel = NSTextField(labelWithString: "CORES")
     coresLabel.font = .systemFont(ofSize: 9, weight: .semibold)
@@ -298,6 +349,7 @@ private final class SensorSummaryView: NSView {
     let contentStack = NSStackView(
       views: [
         historyStack,
+        gpuStack,
         statsTable,
         coresStack,
       ]
@@ -325,6 +377,11 @@ private final class SensorSummaryView: NSView {
       historyLabel.widthAnchor.constraint(equalTo: historyStack.widthAnchor),
       historyView.heightAnchor.constraint(equalToConstant: 65),
       historyView.widthAnchor.constraint(equalTo: historyStack.widthAnchor),
+      gpuStack.heightAnchor.constraint(equalToConstant: 57),
+      gpuStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+      gpuHeader.widthAnchor.constraint(equalTo: gpuStack.widthAnchor),
+      gpuHistoryView.heightAnchor.constraint(equalToConstant: 41),
+      gpuHistoryView.widthAnchor.constraint(equalTo: gpuStack.widthAnchor),
       statsTable.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
       tableHeightConstraint,
       coresStack.heightAnchor.constraint(equalToConstant: 66),
@@ -343,9 +400,17 @@ private final class SensorSummaryView: NSView {
   func update(
     with snapshot: SensorDisplaySnapshot,
     history: UnsafeBufferPointer<rasitop_history_point>,
+    gpuHistory: UnsafeBufferPointer<rasitop_history_point>,
     cores: UnsafeBufferPointer<CPUComponentDisplaySample>
   ) {
     historyView.update(history)
+    gpuStack.isHidden = !snapshot.gpuSupported
+    if snapshot.gpuSupported {
+      gpuHistoryView.update(gpuHistory)
+      gpuValueLabel.stringValue = snapshot.gpuRatio.map {
+        String(format: "%.0f%%", $0 * 100)
+      } ?? "—"
+    }
     statsTable.update(with: snapshot)
     coreComponentsView.update(cores)
     let tableHeight = statsTable.preferredHeight
@@ -507,6 +572,138 @@ private final class CPUHistoryView: NSView {
     gridLayer.strokeColor = NSColor.separatorColor.withAlphaComponent(0.28).cgColor
     fillLayer.fillColor = NSColor.systemBlue.withAlphaComponent(0.16).cgColor
     lineLayer.strokeColor = NSColor.systemBlue.cgColor
+  }
+}
+
+@MainActor
+private final class GPUHistoryView: NSView {
+  private let gridLayer = CAShapeLayer()
+  private let fillLayer = CAShapeLayer()
+  private let lineLayer = CAShapeLayer()
+  private var values = Array(
+    repeating: Double.nan,
+    count: Int(rasitop_gpu_history_capacity)
+  )
+  private var valueCount = 0
+
+  init() {
+    super.init(frame: .zero)
+    setAccessibilityElement(true)
+    setAccessibilityRole(.image)
+    setAccessibilityLabel("GPU usage history")
+    wantsLayer = true
+    layer?.cornerRadius = 6
+    layer?.masksToBounds = true
+    gridLayer.fillColor = nil
+    gridLayer.lineWidth = 1
+    gridLayer.lineDashPattern = [2, 3]
+    fillLayer.strokeColor = nil
+    lineLayer.fillColor = nil
+    lineLayer.lineWidth = 1.25
+    lineLayer.lineJoin = .round
+    layer?.addSublayer(gridLayer)
+    layer?.addSublayer(fillLayer)
+    layer?.addSublayer(lineLayer)
+    updateColors()
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) is not supported")
+  }
+
+  override func layout() {
+    super.layout()
+    updatePaths()
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    updateColors()
+  }
+
+  func update(_ history: UnsafeBufferPointer<rasitop_history_point>) {
+    valueCount = min(history.count, values.count)
+    for index in 0..<valueCount {
+      let ratio = history[index].total_ratio
+      values[index] = ratio.isFinite ? min(max(ratio, 0), 1) : .nan
+    }
+    if let current = values.prefix(valueCount).last(where: { $0.isFinite }) {
+      setAccessibilityValue(
+        String(format: "Current utilization %.0f percent", current * 100)
+      )
+    } else {
+      setAccessibilityValue("GPU utilization unavailable")
+    }
+    updatePaths()
+  }
+
+  private func updatePaths() {
+    let content = bounds.insetBy(dx: 6, dy: 5)
+    guard content.width > 0, content.height > 0 else { return }
+
+    let gridPath = CGMutablePath()
+    gridPath.move(to: CGPoint(x: content.minX, y: content.midY))
+    gridPath.addLine(to: CGPoint(x: content.maxX, y: content.midY))
+    let linePath = CGMutablePath()
+    let fillPath = CGMutablePath()
+    let step = content.width / CGFloat(max(values.count - 1, 1))
+    let firstX = content.maxX - CGFloat(max(valueCount - 1, 0)) * step
+    var runStart: CGPoint?
+    var runLast: CGPoint?
+
+    for index in 0..<valueCount {
+      let value = values[index]
+      guard value.isFinite else {
+        closeFillRun(fillPath, start: runStart, last: runLast, baseline: content.minY)
+        runStart = nil
+        runLast = nil
+        continue
+      }
+      let point = CGPoint(
+        x: firstX + CGFloat(index) * step,
+        y: content.minY + CGFloat(value) * content.height
+      )
+      if runStart == nil {
+        runStart = point
+        linePath.move(to: point)
+        fillPath.move(to: CGPoint(x: point.x, y: content.minY))
+        fillPath.addLine(to: point)
+      } else {
+        linePath.addLine(to: point)
+        fillPath.addLine(to: point)
+      }
+      runLast = point
+    }
+    closeFillRun(fillPath, start: runStart, last: runLast, baseline: content.minY)
+
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    gridLayer.frame = bounds
+    gridLayer.path = gridPath
+    fillLayer.frame = bounds
+    fillLayer.path = fillPath
+    lineLayer.frame = bounds
+    lineLayer.path = linePath
+    CATransaction.commit()
+  }
+
+  private func closeFillRun(
+    _ path: CGMutablePath,
+    start: CGPoint?,
+    last: CGPoint?,
+    baseline: CGFloat
+  ) {
+    guard start != nil, let last else { return }
+    path.addLine(to: CGPoint(x: last.x, y: baseline))
+    path.closeSubpath()
+  }
+
+  private func updateColors() {
+    layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.08).cgColor
+    gridLayer.strokeColor = NSColor.separatorColor.withAlphaComponent(0.28).cgColor
+    fillLayer.fillColor = NSColor.systemGreen.withAlphaComponent(0.15).cgColor
+    lineLayer.strokeColor = NSColor.systemGreen.cgColor
   }
 }
 

@@ -10,6 +10,7 @@ extern "C" {
 
 #define rasitop_max_logical_cpus 64
 #define rasitop_history_capacity 180
+#define rasitop_gpu_history_capacity 90
 
 #define rasitop_ok 0
 #define rasitop_sample_ready 1
@@ -21,9 +22,9 @@ static const uint32_t rasitop_request_per_core = 0x1;
 static const uint32_t rasitop_request_sensors = 0x2;
 static const uint32_t rasitop_request_gpu = 0x4;
 
-#define rasitop_gpu_capability_utilization UINT64_C(0x1)
-#define rasitop_gpu_error_initialization UINT64_C(0x8000000000000000)
-#define rasitop_gpu_error_sample UINT64_C(0x4000000000000000)
+static const uint64_t rasitop_gpu_capability_utilization = UINT64_C(0x1);
+static const uint64_t rasitop_gpu_error_initialization = UINT64_C(0x8000000000000000);
+static const uint64_t rasitop_gpu_error_sample = UINT64_C(0x4000000000000000);
 
 #define rasitop_sensor_capability_cpu_temperature UINT64_C(0x1)
 #define rasitop_sensor_capability_fan_speed UINT64_C(0x2)
@@ -92,6 +93,9 @@ int32_t rasitop_engine_reset_cpu_baselines(rasitop_engine *engine);
 size_t rasitop_engine_history(rasitop_engine *engine,
                               rasitop_history_point *out_points,
                               size_t capacity);
+size_t rasitop_engine_gpu_history(rasitop_engine *engine,
+                                  rasitop_history_point *out_points,
+                                  size_t capacity);
 int32_t rasitop_engine_destroy(rasitop_engine *engine);
 
 static inline const rasitop_per_core_sample *

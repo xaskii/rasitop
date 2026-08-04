@@ -135,6 +135,32 @@ pub unsafe extern "C" fn rasitop_engine_history(
     .unwrap_or(0)
 }
 
+/// Copies GPU history, including non-finite gap markers, oldest to newest.
+///
+/// # Safety
+///
+/// The pointer requirements match [`rasitop_engine_history`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rasitop_engine_gpu_history(
+    engine: *mut EngineHandle,
+    out_points: *mut HistoryPoint,
+    capacity: usize,
+) -> usize {
+    if engine.is_null() || (out_points.is_null() && capacity != 0) {
+        return 0;
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let engine = unsafe { &*engine };
+        if capacity == 0 {
+            0
+        } else {
+            let output = unsafe { std::slice::from_raw_parts_mut(out_points, capacity) };
+            engine.0.gpu_history(output)
+        }
+    }))
+    .unwrap_or(0)
+}
+
 /// Destroys an engine returned by [`rasitop_engine_create`]. Passing null is a
 /// successful no-op.
 ///
@@ -162,7 +188,8 @@ mod tests {
 
     use super::{
         STATUS_ERROR_INVALID_ARGUMENT, STATUS_OK, rasitop_engine_create, rasitop_engine_destroy,
-        rasitop_engine_history, rasitop_engine_reset_cpu_baselines, rasitop_engine_sample,
+        rasitop_engine_gpu_history, rasitop_engine_history, rasitop_engine_reset_cpu_baselines,
+        rasitop_engine_sample,
     };
     use crate::cpu::{CpuSample, PerCoreSample};
     use crate::engine::{EngineSnapshot, HistoryPoint};
@@ -213,6 +240,10 @@ mod tests {
         );
         assert_eq!(
             unsafe { rasitop_engine_history(std::ptr::null_mut(), std::ptr::null_mut(), 0) },
+            0
+        );
+        assert_eq!(
+            unsafe { rasitop_engine_gpu_history(std::ptr::null_mut(), std::ptr::null_mut(), 0) },
             0
         );
         assert_eq!(

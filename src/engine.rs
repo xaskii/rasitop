@@ -11,6 +11,7 @@ use crate::smc::{SensorSample, SmcError, SmcProvider};
 
 pub const MAX_LOGICAL_CPUS: usize = 64;
 pub const HISTORY_CAPACITY: usize = 180;
+pub const GPU_HISTORY_CAPACITY: usize = 90;
 pub const REQUEST_PER_CORE: u32 = 1 << 0;
 pub const REQUEST_SENSORS: u32 = 1 << 1;
 pub const REQUEST_GPU: u32 = 1 << 2;
@@ -151,30 +152,30 @@ pub struct HistoryPoint {
 }
 
 #[derive(Debug)]
-struct HistoryBuffer {
-    points: [HistoryPoint; HISTORY_CAPACITY],
+struct HistoryBuffer<const CAPACITY: usize> {
+    points: [HistoryPoint; CAPACITY],
     start: usize,
     len: usize,
 }
 
-impl Default for HistoryBuffer {
+impl<const CAPACITY: usize> Default for HistoryBuffer<CAPACITY> {
     fn default() -> Self {
         Self {
-            points: [HistoryPoint::default(); HISTORY_CAPACITY],
+            points: [HistoryPoint::default(); CAPACITY],
             start: 0,
             len: 0,
         }
     }
 }
 
-impl HistoryBuffer {
+impl<const CAPACITY: usize> HistoryBuffer<CAPACITY> {
     fn push(&mut self, point: HistoryPoint) {
-        let index = (self.start + self.len) % HISTORY_CAPACITY;
+        let index = (self.start + self.len) % CAPACITY;
         self.points[index] = point;
-        if self.len < HISTORY_CAPACITY {
+        if self.len < CAPACITY {
             self.len += 1;
         } else {
-            self.start = (self.start + 1) % HISTORY_CAPACITY;
+            self.start = (self.start + 1) % CAPACITY;
         }
     }
 
@@ -182,7 +183,7 @@ impl HistoryBuffer {
         let count = self.len.min(output.len());
         let skipped = self.len - count;
         for (output_index, point) in output.iter_mut().take(count).enumerate() {
-            let source_index = (self.start + skipped + output_index) % HISTORY_CAPACITY;
+            let source_index = (self.start + skipped + output_index) % CAPACITY;
             *point = self.points[source_index];
         }
         count
@@ -198,7 +199,8 @@ pub struct CpuEngine {
     gpu: Option<GpuProvider>,
     gpu_error: Option<GpuError>,
     emissions: EmissionTimeline,
-    history: HistoryBuffer,
+    history: HistoryBuffer<HISTORY_CAPACITY>,
+    gpu_history: HistoryBuffer<GPU_HISTORY_CAPACITY>,
     snapshot: EngineSnapshot,
 }
 
@@ -254,6 +256,7 @@ impl CpuEngine {
             gpu_error,
             emissions: EmissionTimeline::new(started_at),
             history: HistoryBuffer::default(),
+            gpu_history: HistoryBuffer::default(),
             snapshot: EngineSnapshot {
                 gpu: gpu_reading,
                 ..EngineSnapshot::default()
@@ -273,6 +276,10 @@ impl CpuEngine {
 
     pub fn history(&self, output: &mut [HistoryPoint]) -> usize {
         self.history.copy_into(output)
+    }
+
+    pub fn gpu_history(&self, output: &mut [HistoryPoint]) -> usize {
+        self.gpu_history.copy_into(output)
     }
 
     /// Re-establishes CPU counter baselines without rebuilding the engine.
@@ -370,6 +377,12 @@ impl CpuEngine {
             monotonic_ns: self.snapshot.monotonic_ns,
             total_ratio: aggregate.total_ratio,
         });
+        if request.contains(SampleRequest::GPU) {
+            self.gpu_history.push(HistoryPoint {
+                monotonic_ns: self.snapshot.monotonic_ns,
+                total_ratio: self.snapshot.gpu.busy_ratio,
+            });
+        }
         Ok(Some(&self.snapshot))
     }
 }
@@ -384,8 +397,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        EmissionTimeline, EngineError, HISTORY_CAPACITY, HistoryBuffer, HistoryPoint,
-        SampleRequest, duration_ns,
+        EmissionTimeline, EngineError, GPU_HISTORY_CAPACITY, HISTORY_CAPACITY, HistoryBuffer,
+        HistoryPoint, SampleRequest, duration_ns,
     };
     use crate::cpu::CpuError;
 
@@ -452,7 +465,7 @@ mod tests {
 
     #[test]
     fn history_keeps_the_latest_points_in_oldest_to_newest_order() {
-        let mut history = HistoryBuffer::default();
+        let mut history: HistoryBuffer<HISTORY_CAPACITY> = HistoryBuffer::default();
         for value in 1..=(HISTORY_CAPACITY + 2) {
             history.push(HistoryPoint {
                 monotonic_ns: value as u64,
@@ -469,6 +482,26 @@ mod tests {
         assert_eq!(history.copy_into(&mut latest), 2);
         assert_eq!(latest[0].monotonic_ns, 181);
         assert_eq!(latest[1].monotonic_ns, 182);
+    }
+
+    #[test]
+    fn gpu_history_is_bounded_to_three_minutes_and_preserves_gaps() {
+        let mut history: HistoryBuffer<GPU_HISTORY_CAPACITY> = HistoryBuffer::default();
+        for value in 1..=GPU_HISTORY_CAPACITY {
+            history.push(HistoryPoint {
+                monotonic_ns: value as u64,
+                total_ratio: 0.5,
+            });
+        }
+        history.push(HistoryPoint {
+            monotonic_ns: 91,
+            total_ratio: f64::NAN,
+        });
+        let mut points = [HistoryPoint::default(); GPU_HISTORY_CAPACITY];
+        assert_eq!(history.copy_into(&mut points), GPU_HISTORY_CAPACITY);
+        assert_eq!(points[0].monotonic_ns, 2);
+        assert_eq!(points[GPU_HISTORY_CAPACITY - 1].monotonic_ns, 91);
+        assert!(points[GPU_HISTORY_CAPACITY - 1].total_ratio.is_nan());
     }
 
     #[cfg(target_os = "macos")]

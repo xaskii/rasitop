@@ -25,7 +25,12 @@ final class EngineController: NSObject {
     repeating: rasitop_history_point(),
     count: Int(rasitop_history_capacity)
   )
+  private var gpuHistoryPoints = Array(
+    repeating: rasitop_history_point(),
+    count: Int(rasitop_gpu_history_capacity)
+  )
   private var sensorTicksRemaining = 0
+  private var gpuTicksRemaining = 0
   private var sensorDetailsVisible = false
 
   init(
@@ -90,6 +95,7 @@ final class EngineController: NSObject {
       NSLog("rasitop CPU baseline reset failed with status %d", status)
     }
     sensorTicksRemaining = 0
+    gpuTicksRemaining = 0
     start()
   }
 
@@ -113,6 +119,12 @@ final class EngineController: NSObject {
     } else {
       sensorTicksRemaining -= 1
     }
+    if gpuTicksRemaining == 0 {
+      requestFlags |= UInt32(rasitop_request_gpu)
+      gpuTicksRemaining = 1
+    } else {
+      gpuTicksRemaining -= 1
+    }
 
     let status = rasitop_engine_sample(
       engine,
@@ -133,10 +145,25 @@ final class EngineController: NSObject {
             start: buffer.baseAddress,
             count: count
           )
-          sensorDetailsConsumer?.update(from: &snapshot, history: history)
+          gpuHistoryPoints.withUnsafeMutableBufferPointer { gpuBuffer in
+            let gpuCount = rasitop_engine_gpu_history(
+              engine,
+              gpuBuffer.baseAddress,
+              gpuBuffer.count
+            )
+            let gpuHistory = UnsafeBufferPointer(
+              start: gpuBuffer.baseAddress,
+              count: gpuCount
+            )
+            sensorDetailsConsumer?.update(
+              from: &snapshot,
+              history: history,
+              gpuHistory: gpuHistory
+            )
+          }
         }
       } else {
-        sensorDetailsConsumer?.update(from: &snapshot, history: nil)
+        sensorDetailsConsumer?.update(from: &snapshot, history: nil, gpuHistory: nil)
       }
     case rasitop_ok:
       break
